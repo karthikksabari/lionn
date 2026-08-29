@@ -10,7 +10,7 @@ The API schema shared with the frontend is Section 7 of the implementation spec;
 
 ## Backend / ML
 
-Trains three models (Baseline A, Baseline B, PINN) on battery degradation data and serves
+Trains two models (Baseline A, PINN) on battery degradation data and serves
 predicted SOH curves, accuracy metrics and physics-violation counts from a FastAPI endpoint.
 
 ### Layout
@@ -22,7 +22,6 @@ backend/
   data/raw/             drop NASA .mat files here
   data/processed/       scaler.pkl, X_train.npy, X_test.npy, y_train.npy, y_test.npy
   models/baseline_a.py  shallow MLP, data loss only
-  models/baseline_b.py  deeper MLP + dropout, data loss only
   models/pinn.py        Tanh/Sigmoid MLP, L_data + λ·L_physics
   models/saved/         *.pt state dicts
   utils/metrics.py      mae, rmse, count_physics_violations, evaluate_all

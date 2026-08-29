@@ -2,7 +2,7 @@
 
 import numpy as np
 
-MODEL_KEYS = ("baseline_a", "baseline_b", "pinn")
+MODEL_KEYS = ("baseline_a", "pinn")
 
 
 def mae(y_true, y_pred) -> float:
