@@ -14,7 +14,7 @@ from backend.data.loader import (
     load_scaler,
     synthetic_curve,
 )
-from backend.models import baseline_a, baseline_b, pinn
+from backend.models import baseline_a, pinn
 from backend.utils.metrics import evaluate_all
 
 logger = logging.getLogger("battery_api")
@@ -50,7 +50,6 @@ class PredictResponse(BaseModel):
     cycles: list[int]
     real: list[float]
     baseline_a: list[float]
-    baseline_b: list[float]
     pinn: list[float]
     metrics: dict[str, ModelMetrics]
     violations: dict[str, int]
@@ -63,7 +62,7 @@ def load_artifacts() -> None:
     except Exception as exc:  # noqa: BLE001 - missing artifacts must not crash startup
         logger.warning("scaler not loaded (%s); run `python -m scripts.train`", exc)
 
-    for key, module in (("baseline_a", baseline_a), ("baseline_b", baseline_b), ("pinn", pinn)):
+    for key, module in (("baseline_a", baseline_a), ("pinn", pinn)):
         try:
             STATE["models"][key] = (module, module.load())
         except Exception as exc:  # noqa: BLE001
@@ -76,7 +75,7 @@ def load_artifacts() -> None:
 
 
 def models_loaded() -> bool:
-    return STATE["scaler"] is not None and len(STATE["models"]) == 3
+    return STATE["scaler"] is not None and len(STATE["models"]) == 2
 
 
 @app.get("/health")
@@ -114,7 +113,7 @@ def predict(req: PredictRequest) -> dict:
     X = scaler.transform(X_raw).astype(np.float32) if scaler is not None else X_raw
 
     preds = {}
-    for key in ("baseline_a", "baseline_b", "pinn"):
+    for key in ("baseline_a", "pinn"):
         entry = STATE["models"].get(key)
         preds[key] = (
             entry[0].predict(entry[1], X) if entry is not None
@@ -128,7 +127,6 @@ def predict(req: PredictRequest) -> dict:
         "cycles": [int(c) for c in cycles],
         "real": np.round(real, 6).tolist(),
         "baseline_a": np.round(preds["baseline_a"].astype(np.float64), 6).tolist(),
-        "baseline_b": np.round(preds["baseline_b"].astype(np.float64), 6).tolist(),
         "pinn": np.round(preds["pinn"].astype(np.float64), 6).tolist(),
         "metrics": {
             key: {"mae": round(val["mae"], 6), "rmse": round(val["rmse"], 6)}

@@ -1,4 +1,4 @@
-"""Train Baseline A, Baseline B and the PINN, then print a comparison table.
+"""Train Baseline A and the PINN, then print a comparison table.
 
 Run with: python -m scripts.train
 """
@@ -6,34 +6,30 @@ Run with: python -m scripts.train
 import numpy as np
 
 from backend.data.loader import FEATURE_COLS, load_all_raw, preprocess
-from backend.models import baseline_a, baseline_b, pinn
+from backend.models import baseline_a, pinn
 from backend.utils.metrics import MODEL_KEYS, evaluate_all
 
 CYCLE_COL_IDX = FEATURE_COLS.index("cycle")
 
 
 def main() -> None:
-    print("[1/6] loading raw data")
+    print("[1/5] loading raw data")
     df = load_all_raw()
     print(f"      rows={len(df)}  profiles={df['profile_id'].nunique()}")
 
-    print("[2/6] preprocessing (scaler fitted on train split only)")
+    print("[2/5] preprocessing (scaler fitted on train split only)")
     X_train, X_test, y_train, y_test, _ = preprocess(df)
     print(f"      X_train={X_train.shape}  X_test={X_test.shape}")
 
-    print("[3/6] training baseline_a")
+    print("[3/5] training baseline_a")
     baseline_a.train(X_train, y_train)
 
-    print("[4/6] training baseline_b")
-    baseline_b.train(X_train, y_train)
-
-    print("[5/6] training pinn")
+    print("[4/5] training pinn")
     pinn.train(X_train, y_train, cycle_col_idx=CYCLE_COL_IDX)
 
-    print("[6/6] evaluating on held-out test split")
+    print("[5/5] evaluating on held-out test split")
     models = {
         "baseline_a": (baseline_a, baseline_a.load(X_train.shape[1])),
-        "baseline_b": (baseline_b, baseline_b.load(X_train.shape[1])),
         "pinn": (pinn, pinn.load(X_train.shape[1])),
     }
 
