@@ -15,17 +15,13 @@ POST /predict
   "cycles": [0, 1, 2],
   "ground_truth": [2.0, 1.999, null],
   "capacity_baseline_mlp": [2.0, 2.001],
-  "capacity_baseline_lstm": [2.0, 1.998],
   "capacity_pinn": [2.0, 1.997],
   "metrics": {
     "rmse_baseline_mlp": 0.041,
-    "rmse_baseline_lstm": 0.033,
     "rmse_pinn": 0.019,
     "mape_baseline_mlp": 2.1,
-    "mape_baseline_lstm": 1.8,
     "mape_pinn": 0.9,
     "physics_violation_index_baseline_mlp": 12.4,
-    "physics_violation_index_baseline_lstm": 6.7,
     "physics_violation_index_pinn": 0.0
   },
   "physics_loss_trace": {
@@ -35,7 +31,6 @@ POST /predict
   },
   "rul": {
     "rul_baseline_mlp": 145,
-    "rul_baseline_lstm": 151,
     "rul_pinn": 138,
     "rul_ground_truth": 140
   }
