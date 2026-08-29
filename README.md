@@ -4,7 +4,9 @@ Team: Web-Acharis
 
 - /backend  — data pipeline, models, PINN, evaluation, serving
 - /frontend — React dashboard
-- CONTRACT.md — shared API schema between backend and frontend
+
+The API schema shared with the frontend is Section 7 of the implementation spec; see
+[Usage](#usage) for a request/response example.
 
 ## Backend / ML
 
@@ -52,8 +54,8 @@ Place the `.mat` files in `backend/data/raw/`. When that directory is empty the 
 generates synthetic curves `soh(cycle) = exp(-decay_rate * cycle) + noise`
 (`decay_rate ~ U(0.003, 0.006)`, `noise ~ N(0, 0.005)`).
 
-Parsing real `.mat` files requires `scipy`, which is not in `requirements.txt`; it is imported
-lazily inside `load_nasa_mat`, so the synthetic path runs with the pinned dependencies only.
+Parsing real `.mat` files uses `scipy.io.loadmat`, imported inside `load_nasa_mat` so the
+synthetic path does not depend on it.
 
 ### Physics constraint
 
