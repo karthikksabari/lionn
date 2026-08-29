@@ -56,7 +56,7 @@ def synthetic_curve(n_cycles: int, seed: int = SYNTHETIC_SEED) -> np.ndarray:
     decay_rate = rng.uniform(0.003, 0.006)
     cycles = np.arange(1, n_cycles + 1, dtype=np.float32)
     noise = rng.normal(0.0, 0.005, size=n_cycles)
-    return np.clip(np.exp(-decay_rate * cycles) + noise, 0.0, 1.0)
+    return np.clip(np.exp(-decay_rate * cycles) + noise, 0.0, 1.0).astype(np.float32)
 
 
 def load_nasa_mat(path: str | os.PathLike, rated_capacity: float = RATED_CAPACITY_AH) -> pd.DataFrame:
@@ -157,3 +157,14 @@ def load_processed():
         np.load(PROCESSED_DIR / "y_train.npy"),
         np.load(PROCESSED_DIR / "y_test.npy"),
     )
+
+
+def get_profile_map(df: pd.DataFrame) -> dict:
+    """Return a mapping profile_id -> soh numpy array (sorted by cycle, dtype float32)."""
+    if df is None or df.empty:
+        return {}
+    profiles = {}
+    for pid, g in df.groupby("profile_id"):
+        arr = g.sort_values("cycle")[TARGET_COL].to_numpy(dtype=np.float32)
+        profiles[pid] = arr
+    return profiles

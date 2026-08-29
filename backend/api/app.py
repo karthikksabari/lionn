@@ -1,6 +1,7 @@
 """FastAPI service exposing SOH predictions from all three models."""
 
 import logging
+import os
 
 import numpy as np
 from fastapi import FastAPI
@@ -13,6 +14,7 @@ from backend.data.loader import (
     load_all_raw,
     load_scaler,
     synthetic_curve,
+    get_profile_map,
 )
 from backend.models import baseline_a, pinn
 from backend.utils.metrics import evaluate_all
@@ -31,7 +33,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-STATE: dict = {"scaler": None, "models": {}, "raw": None}
+STATE: dict = {"scaler": None, "models": {}, "raw": None, "profiles": {}}
 
 
 class PredictRequest(BaseModel):
@@ -70,6 +72,7 @@ def load_artifacts() -> None:
 
     try:
         STATE["raw"] = load_all_raw()
+        STATE["profiles"] = get_profile_map(STATE["raw"]) if STATE["raw"] is not None else {}
     except Exception as exc:  # noqa: BLE001
         logger.warning("raw dataset unavailable (%s)", exc)
 
@@ -84,25 +87,24 @@ def health() -> dict:
 
 
 def real_curve(profile_id: str, n_cycles: int) -> np.ndarray:
-    df = STATE["raw"]
-    if df is not None:
-        subset = df[df["profile_id"] == profile_id].sort_values("cycle")
-        if not subset.empty:
-            values = subset[TARGET_COL].to_numpy(dtype=np.float64)
-            if values.size >= n_cycles:
-                return values[:n_cycles]
-            padded = np.full(n_cycles, values[-1], dtype=np.float64)
-            padded[: values.size] = values
-            return padded
-    return synthetic_curve(n_cycles).astype(np.float64)
+    profiles = STATE.get("profiles", {})
+    arr = profiles.get(profile_id)
+    if arr is not None:
+        if arr.size >= n_cycles:
+            return arr[:n_cycles]
+        padded = np.full(n_cycles, arr[-1], dtype=np.float32)
+        padded[: arr.size] = arr
+        return padded
+    return synthetic_curve(n_cycles).astype(np.float32)
 
 
 @app.post("/predict", response_model=PredictResponse)
 def predict(req: PredictRequest) -> dict:
-    cycles = np.arange(1, req.n_cycles + 1, dtype=np.float32)
+    cycles = np.arange(1, req.n_cycles + 1, dtype=np.int32)
+    cycles_f = cycles.astype(np.float32)
     X_raw = np.stack(
         [
-            cycles,
+            cycles_f,
             np.full(req.n_cycles, req.c_rate, dtype=np.float32),
             np.full(req.n_cycles, req.temperature, dtype=np.float32),
         ],
@@ -125,9 +127,9 @@ def predict(req: PredictRequest) -> dict:
 
     return {
         "cycles": [int(c) for c in cycles],
-        "real": np.round(real, 6).tolist(),
-        "baseline_a": np.round(preds["baseline_a"].astype(np.float64), 6).tolist(),
-        "pinn": np.round(preds["pinn"].astype(np.float64), 6).tolist(),
+        "real": np.round(real.astype(np.float32), 6).tolist(),
+        "baseline_a": np.round(preds["baseline_a"].astype(np.float32), 6).tolist(),
+        "pinn": np.round(preds["pinn"].astype(np.float32), 6).tolist(),
         "metrics": {
             key: {"mae": round(val["mae"], 6), "rmse": round(val["rmse"], 6)}
             for key, val in results["metrics"].items()

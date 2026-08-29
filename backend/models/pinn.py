@@ -1,6 +1,7 @@
 """PINN: composite data + physics loss enforcing monotonically non-increasing SOH."""
 
 from pathlib import Path
+import os
 
 import numpy as np
 import torch
@@ -38,7 +39,8 @@ class PINN(nn.Module):
 
 def physics_loss(model: PINN, X: torch.Tensor, cycle_col_idx: int = 0) -> torch.Tensor:
     """mean(ReLU(SOH(cycle + eps) - SOH(cycle))): penalise any increase in SOH."""
-    X_perturbed = X.clone()
+    # construct perturbation tensor without cloning full X when possible
+    X_perturbed = X + torch.zeros_like(X)
     X_perturbed[:, cycle_col_idx] = X_perturbed[:, cycle_col_idx] + EPSILON
     delta = model(X_perturbed) - model(X)
     return torch.mean(torch.relu(delta))
@@ -81,8 +83,11 @@ def train(X_train: np.ndarray, y_train: np.ndarray, cycle_col_idx: int = 0) -> P
 
 
 def load(in_features: int = IN_FEATURES) -> PINN:
+    device_str = os.getenv("DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(device_str)
     model = PINN(in_features=in_features)
-    model.load_state_dict(torch.load(SAVE_PATH, map_location="cpu"))
+    model.load_state_dict(torch.load(SAVE_PATH, map_location=device))
+    model.to(device)
     model.eval()
     return model
 
@@ -90,5 +95,7 @@ def load(in_features: int = IN_FEATURES) -> PINN:
 def predict(model: PINN, X: np.ndarray) -> np.ndarray:
     model.eval()
     with torch.no_grad():
-        out = model(torch.as_tensor(np.asarray(X, dtype=np.float32)))
-    return out.numpy().ravel()
+        device = next(model.parameters()).device
+        t = torch.as_tensor(np.asarray(X, dtype=np.float32)).to(device)
+        out = model(t)
+    return out.cpu().numpy().ravel().astype(np.float32)

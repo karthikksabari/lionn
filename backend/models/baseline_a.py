@@ -1,6 +1,7 @@
 """Baseline A: shallow MLP trained on data only (no physics constraint)."""
 
 from pathlib import Path
+import os
 
 import numpy as np
 import torch
@@ -60,8 +61,11 @@ def train(X_train: np.ndarray, y_train: np.ndarray) -> BaselineA:
 
 
 def load(in_features: int = IN_FEATURES) -> BaselineA:
+    device_str = os.getenv("DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(device_str)
     model = BaselineA(in_features=in_features)
-    model.load_state_dict(torch.load(SAVE_PATH, map_location="cpu"))
+    model.load_state_dict(torch.load(SAVE_PATH, map_location=device))
+    model.to(device)
     model.eval()
     return model
 
@@ -69,5 +73,7 @@ def load(in_features: int = IN_FEATURES) -> BaselineA:
 def predict(model: BaselineA, X: np.ndarray) -> np.ndarray:
     model.eval()
     with torch.no_grad():
-        out = model(torch.as_tensor(np.asarray(X, dtype=np.float32)))
-    return out.numpy().ravel()
+        device = next(model.parameters()).device
+        t = torch.as_tensor(np.asarray(X, dtype=np.float32)).to(device)
+        out = model(t)
+    return out.cpu().numpy().ravel().astype(np.float32)
