@@ -1,0 +1,234 @@
+/* STREAMING_CHUNK:Importing Google Fonts and Tailwind directives */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .font-space {
+    font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+}
+@keyframes pulseGlow {
+  0%, 100% {
+    opacity: 0.85;
+  }
+  50% {
+    opacity: 1;
+    filter: brightness(1.15);
+  }
+}
+/* STREAMING_CHUNK:Configuring custom base theme and ambient charge glow */
+@layer base {
+body {
+@apply bg-[#0a0a0a] text-slate-100 font-sans antialiased min-h-screen selection:bg-amber-500/30 selection:text-amber-200 overflow-x-hidden;
+background-image:
+radial-gradient(circle at 100% 0%, rgba(245, 158, 11, 0.08) 0%, transparent 45%),
+radial-gradient(circle at 0% 100%, rgba(0, 240, 255, 0.04) 0%, transparent 40%),
+radial-gradient(circle at 50% 50%, rgba(15, 15, 18, 0.7) 0%, #0a0a0a 100%);
+background-attachment: fixed;
+}
+
+h1, h2, h3, h4, h5, h6 {
+@apply font-display tracking-tight text-slate-100;
+}
+
+code, pre {
+@apply font-mono;
+}
+}
+
+/* STREAMING_CHUNK:Defining custom animations and interactive charge gauges /
+@layer components {
+/ Sweeping Charge Gauge Button Animation */
+.btn-charge-amber {
+@apply relative overflow-hidden transition-all duration-300 rounded-lg font-medium tracking-wide shadow-amber-glow;
+background: linear-gradient(135deg, #1c1917 0%, #292524 100%);
+border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.btn-charge-amber::before {
+content: '';
+position: absolute;
+top: 0;
+left: -100%;
+width: 100%;
+height: 100%;
+background: linear-gradient(
+90deg,
+transparent,
+rgba(245, 158, 11, 0.35),
+rgba(251, 191, 36, 0.7),
+rgba(245, 158, 11, 0.35),
+transparent
+);
+transition: left 0.65s cubic-bezier(0.4, 0, 0.2, 1);
+pointer-events: none;
+}
+
+.btn-charge-amber:hover::before {
+left: 100%;
+}
+
+.btn-charge-amber:hover {
+@apply border-amber-400 text-amber-300 shadow-amber-glow-lg;
+transform: translateY(-1px);
+}
+
+/* Sweeping Charge Gauge for Cyan Button */
+.btn-charge-cyan {
+@apply relative overflow-hidden transition-all duration-300 rounded-lg font-medium tracking-wide shadow-cyan-glow;
+background: linear-gradient(135deg, #083344 0%, #0e7490 100%);
+border: 1px solid rgba(0, 240, 255, 0.5);
+}
+
+.btn-charge-cyan::before {
+content: '';
+position: absolute;
+top: 0;
+left: -100%;
+width: 100%;
+height: 100%;
+background: linear-gradient(
+90deg,
+transparent,
+rgba(0, 240, 255, 0.3),
+rgba(34, 211, 238, 0.8),
+rgba(0, 240, 255, 0.3),
+transparent
+);
+transition: left 0.65s cubic-bezier(0.4, 0, 0.2, 1);
+pointer-events: none;
+}
+
+.btn-charge-cyan:hover::before {
+left: 100%;
+}
+
+.btn-charge-cyan:hover {
+@apply border-cyan-electric text-cyan-50 shadow-cyan-glow-lg;
+transform: translateY(-1px);
+}
+
+/* Charge and Precision Card Styling */
+.lionn-card {
+@apply bg-charcoal-850/80 backdrop-blur-md border border-charcoal-700/60 rounded-xl transition-all duration-300;
+}
+
+.lionn-card:hover {
+@apply border-amber-500/30 shadow-card-lift;
+transform: translateY(-2px);
+}
+
+/* Custom Range Slider Styling */
+.lionn-slider {
+@apply w-full h-1.5 bg-charcoal-700 rounded-lg appearance-none cursor-pointer accent-amber-glow focus:outline-none;
+}
+
+.lionn-slider::-webkit-slider-thumb {
+@apply appearance-none w-4 h-4 rounded-full bg-amber-glow shadow-amber-glow cursor-pointer transition-transform duration-150;
+}
+
+.lionn-slider::-webkit-slider-thumb:hover {
+transform: scale(1.2);
+}
+/* STREAMING_CHUNK:Importing Tailwind directives and fonts */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+body {
+@apply bg-[#060709] text-slate-100 antialiased font-sans overflow-x-hidden;
+background-image:
+radial-gradient(circle at 10% 20%, rgba(245, 158, 11, 0.04) 0%, transparent 40%),
+radial-gradient(circle at 90% 80%, rgba(0, 240, 255, 0.04) 0%, transparent 40%);
+min-height: 100vh;
+}
+
+h1, h2, h3, h4, h5, h6 {
+font-family: 'Space Grotesk', sans-serif;
+letter-spacing: -0.025em;
+}
+
+code, pre {
+font-family: 'JetBrains Mono', monospace;
+}
+}
+
+/* STREAMING_CHUNK:Defining reusable component utility styles /
+@layer components {
+/ High-precision Glass/Dark Card */
+.lionn-card {
+@apply bg-gradient-to-b from-[#111113] to-[#0c0d0f] border border-white/[0.08] rounded-2xl shadow-xl transition-all duration-300;
+}
+
+.lionn-card:hover {
+@apply border-white/[0.14] shadow-2xl;
+box-shadow: 0 12px 30px -10px rgba(0, 0, 0, 0.8), 0 0 20px 0 rgba(245, 158, 11, 0.08);
+}
+
+/* Sweeping Amber Charge Button */
+.btn-charge-amber {
+@apply relative overflow-hidden rounded-xl border border-amber-500/40 bg-charcoal-900 transition-all duration-300;
+}
+
+.btn-charge-amber::before {
+content: '';
+position: absolute;
+top: 0;
+left: 0;
+width: 100%;
+height: 100%;
+background: linear-gradient(90deg, rgba(245, 158, 11, 0.25) 0%, rgba(251, 191, 36, 0.45) 50%, rgba(245, 158, 11, 0.25) 100%);
+transform: translateX(-100%);
+transition: transform 0.5s ease;
+z-index: 0;
+}
+
+.btn-charge-amber:hover::before {
+transform: translateX(0);
+}
+
+.btn-charge-amber > * {
+position: relative;
+z-index: 1;
+}
+
+/* Sweeping Cyan Charge Button */
+.btn-charge-cyan {
+@apply relative overflow-hidden rounded-xl border border-cyan-500/40 bg-charcoal-900 transition-all duration-300;
+}
+
+.btn-charge-cyan::before {
+content: '';
+position: absolute;
+top: 0;
+left: 0;
+width: 100%;
+height: 100%;
+background: linear-gradient(90deg, rgba(0, 240, 255, 0.25) 0%, rgba(34, 211, 238, 0.45) 50%, rgba(0, 240, 255, 0.25) 100%);
+transform: translateX(-100%);
+transition: transform 0.5s ease;
+z-index: 0;
+}
+
+.btn-charge-cyan:hover::before {
+transform: translateX(0);
+}
+
+.btn-charge-cyan > * {
+position: relative;
+z-index: 1;
+}
+
+/* Custom Range Slider */
+.lionn-slider {
+@apply w-full h-2 bg-[#222227] rounded-lg appearance-none cursor-pointer accent-amber-500 focus:outline-none;
+}
