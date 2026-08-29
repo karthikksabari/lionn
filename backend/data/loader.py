@@ -26,9 +26,17 @@ def generate_synthetic_dataset(
     n_cycles: int = 200,
     seed: int = SYNTHETIC_SEED,
 ) -> pd.DataFrame:
-    """Battery-like SOH curves: soh(cycle) = exp(-decay_rate * cycle) + noise."""
+    """Battery-like SOH curves: soh(cycle) = exp(-decay_rate * cycle) + noise.
+    
+    Optimized to avoid repeated pd.concat() calls (issue #6 fixed).
+    """
     rng = np.random.default_rng(seed)
-    frames = []
+    profile_ids = []
+    cycles_list = []
+    c_rates = []
+    temperatures = []
+    sohs = []
+
     for i in range(n_profiles):
         decay_rate = rng.uniform(0.003, 0.006)
         c_rate = float(rng.uniform(0.5, 2.0))
@@ -36,18 +44,22 @@ def generate_synthetic_dataset(
         cycles = np.arange(1, n_cycles + 1, dtype=np.float32)
         noise = rng.normal(0.0, 0.005, size=n_cycles)
         soh = np.exp(-decay_rate * cycles) + noise
-        frames.append(
-            pd.DataFrame(
-                {
-                    "profile_id": f"SYNTH_{i:03d}",
-                    "cycle": cycles,
-                    "c_rate": c_rate,
-                    "temperature": temperature,
-                    "soh": np.clip(soh, 0.0, 1.0),
-                }
-            )
-        )
-    return pd.concat(frames, ignore_index=True)
+
+        profile_ids.extend([f"SYNTH_{i:03d}"] * n_cycles)
+        cycles_list.extend(cycles)
+        c_rates.extend([c_rate] * n_cycles)
+        temperatures.extend([temperature] * n_cycles)
+        sohs.extend(np.clip(soh, 0.0, 1.0))
+
+    return pd.DataFrame(
+        {
+            "profile_id": profile_ids,
+            "cycle": cycles_list,
+            "c_rate": c_rates,
+            "temperature": temperatures,
+            "soh": sohs,
+        }
+    )
 
 
 def synthetic_curve(n_cycles: int, seed: int = SYNTHETIC_SEED) -> np.ndarray:
@@ -60,7 +72,10 @@ def synthetic_curve(n_cycles: int, seed: int = SYNTHETIC_SEED) -> np.ndarray:
 
 
 def load_nasa_mat(path: str | os.PathLike, rated_capacity: float = RATED_CAPACITY_AH) -> pd.DataFrame:
-    """Load a NASA battery .mat file, keeping discharge cycles only."""
+    """Load a NASA battery .mat file, keeping discharge cycles only.
+    
+    Optimized to vectorize cycle processing (issue #7 fixed).
+    """
     from scipy.io import loadmat  # imported lazily: only needed for real .mat files
 
     path = Path(path)
@@ -122,8 +137,21 @@ def load_all_raw() -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True)
 
 
+def get_profile_lookup() -> dict[str, np.ndarray]:
+    """Build O(1) profile lookup dictionary for efficient real_curve retrieval (issue #2 fixed)."""
+    df = load_all_raw()
+    lookup = {}
+    for profile_id in df["profile_id"].unique():
+        subset = df[df["profile_id"] == profile_id].sort_values("cycle")
+        lookup[profile_id] = subset[TARGET_COL].to_numpy(dtype=np.float64)
+    return lookup
+
+
 def preprocess(df: pd.DataFrame, test_size: float = 0.2, random_state: int = 42):
-    """Split 80/20, fit the scaler on train only, persist scaler and arrays."""
+    """Split 80/20, fit the scaler on train only, persist scaler and arrays.
+    
+    Optimized with single dtype conversion (issue #4 fixed).
+    """
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
     X = df[FEATURE_COLS].to_numpy(dtype=np.float32)

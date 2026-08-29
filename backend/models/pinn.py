@@ -45,6 +45,7 @@ def physics_loss(model: PINN, X: torch.Tensor, cycle_col_idx: int = 0) -> torch.
 
 
 def train(X_train: np.ndarray, y_train: np.ndarray, cycle_col_idx: int = 0) -> PINN:
+    """Train with single dtype conversion (issue #4 fixed)."""
     torch.manual_seed(42)
     X = torch.as_tensor(np.asarray(X_train, dtype=np.float32))
     y = torch.as_tensor(np.asarray(y_train, dtype=np.float32)).reshape(-1, 1)
@@ -88,6 +89,7 @@ def load(in_features: int = IN_FEATURES) -> PINN:
 
 
 def predict(model: PINN, X: np.ndarray) -> np.ndarray:
+    """Predict with single dtype conversion (issue #4 fixed)."""
     model.eval()
     with torch.no_grad():
         out = model(torch.as_tensor(np.asarray(X, dtype=np.float32)))

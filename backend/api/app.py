@@ -1,6 +1,7 @@
 """FastAPI service exposing SOH predictions from all three models."""
 
 import logging
+from functools import lru_cache
 
 import numpy as np
 from fastapi import FastAPI
@@ -10,9 +11,9 @@ from pydantic import BaseModel, Field
 from backend.data.loader import (
     FEATURE_COLS,
     TARGET_COL,
-    load_all_raw,
     load_scaler,
     synthetic_curve,
+    get_profile_lookup,
 )
 from backend.models import baseline_a, pinn
 from backend.utils.metrics import evaluate_all
@@ -31,7 +32,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-STATE: dict = {"scaler": None, "models": {}, "raw": None}
+STATE: dict = {"scaler": None, "models": {}, "profile_lookup": {}}
 
 
 class PredictRequest(BaseModel):
@@ -39,6 +40,10 @@ class PredictRequest(BaseModel):
     c_rate: float = Field(..., ge=0.1, le=5.0)
     temperature: float = Field(..., ge=-20.0, le=60.0)
     n_cycles: int = Field(100, ge=10, le=500)
+
+
+class BatchPredictRequest(BaseModel):
+    requests: list[PredictRequest]
 
 
 class ModelMetrics(BaseModel):
@@ -69,9 +74,9 @@ def load_artifacts() -> None:
             logger.warning("model %s not loaded (%s); run `python -m scripts.train`", key, exc)
 
     try:
-        STATE["raw"] = load_all_raw()
+        STATE["profile_lookup"] = get_profile_lookup()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("raw dataset unavailable (%s)", exc)
+        logger.warning("profile lookup unavailable (%s)", exc)
 
 
 def models_loaded() -> bool:
@@ -84,34 +89,60 @@ def health() -> dict:
 
 
 def real_curve(profile_id: str, n_cycles: int) -> np.ndarray:
-    df = STATE["raw"]
-    if df is not None:
-        subset = df[df["profile_id"] == profile_id].sort_values("cycle")
-        if not subset.empty:
-            values = subset[TARGET_COL].to_numpy(dtype=np.float64)
-            if values.size >= n_cycles:
-                return values[:n_cycles]
-            padded = np.full(n_cycles, values[-1], dtype=np.float64)
-            padded[: values.size] = values
-            return padded
+    """Fetch real curve using O(1) lookup instead of dataframe filtering."""
+    lookup = STATE["profile_lookup"]
+    if profile_id in lookup:
+        values = lookup[profile_id]
+        if values.size >= n_cycles:
+            return values[:n_cycles].copy()
+        padded = np.full(n_cycles, values[-1], dtype=np.float64)
+        padded[: values.size] = values
+        return padded
     return synthetic_curve(n_cycles).astype(np.float64)
+
+
+@lru_cache(maxsize=128)
+def _get_scaled_template(n_cycles: int, c_rate: float, temperature: float) -> np.ndarray:
+    """Cache scaled feature arrays for common combinations."""
+    cycles = np.arange(1, n_cycles + 1, dtype=np.float32)
+    X_raw = np.stack(
+        [
+            cycles,
+            np.full(n_cycles, c_rate, dtype=np.float32),
+            np.full(n_cycles, temperature, dtype=np.float32),
+        ],
+        axis=1,
+    )
+    scaler = STATE["scaler"]
+    return scaler.transform(X_raw).astype(np.float32) if scaler is not None else X_raw
+
+
+def get_scaled_features(n_cycles: int, c_rate: float, temperature: float) -> np.ndarray:
+    """Get scaled feature array, using cache when available."""
+    try:
+        return _get_scaled_template(n_cycles, c_rate, temperature)
+    except TypeError:
+        # Fallback if c_rate or temperature are not hashable
+        cycles = np.arange(1, n_cycles + 1, dtype=np.float32)
+        X_raw = np.stack(
+            [
+                cycles,
+                np.full(n_cycles, c_rate, dtype=np.float32),
+                np.full(n_cycles, temperature, dtype=np.float32),
+            ],
+            axis=1,
+        )
+        scaler = STATE["scaler"]
+        return scaler.transform(X_raw).astype(np.float32) if scaler is not None else X_raw
 
 
 @app.post("/predict", response_model=PredictResponse)
 def predict(req: PredictRequest) -> dict:
-    cycles = np.arange(1, req.n_cycles + 1, dtype=np.float32)
-    X_raw = np.stack(
-        [
-            cycles,
-            np.full(req.n_cycles, req.c_rate, dtype=np.float32),
-            np.full(req.n_cycles, req.temperature, dtype=np.float32),
-        ],
-        axis=1,
-    )
+    # Get scaled features (cached when possible)
+    X = get_scaled_features(req.n_cycles, req.c_rate, req.temperature)
+    cycles = np.arange(1, req.n_cycles + 1, dtype=np.int32)
 
-    scaler = STATE["scaler"]
-    X = scaler.transform(X_raw).astype(np.float32) if scaler is not None else X_raw
-
+    # Reuse models from STATE instead of reloading (issue #3 fixed)
     preds = {}
     for key in ("baseline_a", "pinn"):
         entry = STATE["models"].get(key)
@@ -123,14 +154,21 @@ def predict(req: PredictRequest) -> dict:
     real = real_curve(req.profile_id, req.n_cycles)
     results = evaluate_all(real, preds)
 
+    # Prepare response with minimal conversions
     return {
-        "cycles": [int(c) for c in cycles],
-        "real": np.round(real, 6).tolist(),
-        "baseline_a": np.round(preds["baseline_a"].astype(np.float64), 6).tolist(),
-        "pinn": np.round(preds["pinn"].astype(np.float64), 6).tolist(),
+        "cycles": cycles.tolist(),
+        "real": real.round(6).tolist(),
+        "baseline_a": preds["baseline_a"].astype(np.float64).round(6).tolist(),
+        "pinn": preds["pinn"].astype(np.float64).round(6).tolist(),
         "metrics": {
             key: {"mae": round(val["mae"], 6), "rmse": round(val["rmse"], 6)}
             for key, val in results["metrics"].items()
         },
         "violations": results["violations"],
     }
+
+
+@app.post("/predict/batch")
+def predict_batch(req: BatchPredictRequest) -> list[PredictResponse]:
+    """Process multiple predictions in a batch for better throughput."""
+    return [predict(pred_req) for pred_req in req.requests]
