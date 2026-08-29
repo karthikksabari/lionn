@@ -20,20 +20,30 @@ backend/
   api/app.py            FastAPI app (/health, /predict)
   data/loader.py        raw loading (NASA .mat or synthetic fallback) + preprocessing
   data/raw/             drop NASA .mat files here
-  data/processed/       scaler.pkl, X_train.npy, X_test.npy, y_train.npy, y_test.npy
+  data/processed/       scaler.pkl, X_train.npy, X_test.npy, y_train.npy, y_test.npy (committed)
   models/baseline_a.py  shallow MLP, data loss only
   models/pinn.py        Tanh/Sigmoid MLP, L_data + λ·L_physics
-  models/saved/         *.pt state dicts
+  models/saved/         *.pt state dicts (committed)
   utils/metrics.py      mae, rmse, count_physics_violations, evaluate_all
 scripts/train.py        full pipeline, prints the comparison table
 ```
 
 ### Usage
 
+The trained weights and processed arrays are committed, so the API and the Docker image
+work straight from a clone. Re-run `python -m scripts.train` only to retrain (e.g. after
+dropping real `.mat` files into `backend/data/raw/`), and commit the regenerated artifacts.
+
 ```bash
 pip install -r requirements.txt
-python -m scripts.train
+python -m scripts.train                # optional: retrain
 uvicorn backend.api.app:app --reload   # http://localhost:8000/docs
+```
+
+Or in Docker (weights are baked into the image at build time):
+
+```bash
+docker compose up --build
 ```
 
 Smoke test:
