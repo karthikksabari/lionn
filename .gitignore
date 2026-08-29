@@ -3,7 +3,9 @@ __pycache__/
 *.pyc
 venv/
 .env
-backend/data/
+backend/data/raw/*.mat
+backend/data/processed/
+backend/models/saved/
 backend/checkpoints/
 
 # Node / frontend
