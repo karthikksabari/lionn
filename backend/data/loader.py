@@ -157,3 +157,45 @@ def load_processed():
         np.load(PROCESSED_DIR / "y_train.npy"),
         np.load(PROCESSED_DIR / "y_test.npy"),
     )
+
+
+def simulate_degradation_ode(c_rate: float, temperature: float, n_cycles: int) -> np.ndarray:
+    """Solve the SOH degradation ODE numerically using Euler integration.
+
+    Equation: dSOH/d(cycle) = -degradation_rate * SOH
+    Analytical solution: SOH(cycle) = SOH_0 * exp(-degradation_rate * cycle)
+    """
+    temp_kelvin = temperature + 273.15
+    base_temp_kelvin = 298.15
+    # Arrhenius thermodynamic factor
+    arrhenius = np.exp((5000.0 / 8.314) * (1.0 / base_temp_kelvin - 1.0 / temp_kelvin))
+    c_rate_mult = c_rate ** 1.15
+    degradation_rate = 0.00032 * arrhenius * c_rate_mult
+
+    soh = []
+    current_soh = 1.0
+    for _ in range(1, n_cycles + 1):
+        # Euler step: dSOH = -degradation_rate * current_soh
+        current_soh += -degradation_rate * current_soh
+        soh.append(max(0.05, current_soh))
+    return np.array(soh, dtype=np.float64)
+
+
+def get_profile_label(c_rate: float, temp: float) -> str:
+    """Generate a descriptive human-readable label based on c_rate and temperature."""
+    if temp < 5:
+        temp_str = "Sub-Zero" if temp < 0 else "Cold"
+    elif temp > 40:
+        temp_str = "High-Temp"
+    else:
+        temp_str = "Nominal"
+
+    if c_rate > 2.5:
+        c_str = "Fast Charge"
+    elif c_rate > 1.5:
+        c_str = "High Current"
+    else:
+        c_str = "Standard"
+
+    return f"{temp_str} {c_str} Profile ({c_rate:.1f}C, {temp:.1f}°C)"
+
