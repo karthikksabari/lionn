@@ -63,6 +63,7 @@ class ProfileInfo(BaseModel):
     label: str
     c_rate: float
     temperature: float
+    max_cycles: int
     split: str
 
 
@@ -124,10 +125,11 @@ def get_profiles() -> dict:
         "NASA_B0018": "test",
     }
 
-    # Group by profile_id and find the first c_rate and temperature
+    # Group by profile_id and find the first c_rate and temperature, and max cycle count
     grouped = df.groupby("profile_id").agg({
         "c_rate": "first",
-        "temperature": "first"
+        "temperature": "first",
+        "cycle": "max"
     }).reset_index()
 
     # Sort alphabetically by profile_id
@@ -139,6 +141,7 @@ def get_profiles() -> dict:
         pid = str(row["profile_id"])
         c_rate = float(row["c_rate"])
         temp = float(row["temperature"])
+        max_cycles = int(row["cycle"])
 
         # Determine split
         if pid in split_map:
@@ -157,6 +160,7 @@ def get_profiles() -> dict:
             "label": label,
             "c_rate": round(c_rate, 4),
             "temperature": round(temp, 4),
+            "max_cycles": max_cycles,
             "split": split
         })
 
