@@ -62,6 +62,7 @@ def test_predict_endpoint_with_dummy_models():
     assert "metrics" in body and "violations" in body
     assert set(body["metrics"].keys()) == {"baseline_a", "pinn"}
     assert isinstance(body["violations"]["baseline_a"], int)
+    assert "warning" in body
 
 
 def test_profiles_endpoint():
@@ -103,6 +104,7 @@ def test_predict_endpoint_custom_scenario():
     assert resp.status_code == 200
     body = resp.json()
     assert body["ground_truth_type"] == "simulated"
+    assert "warning" in body
     # SOH values should be non-increasing
     assert len(body["real"]) == 10
     assert body["real"][0] > body["real"][-1]
@@ -122,4 +124,32 @@ def test_predict_endpoint_custom_scenario():
     body_measured = resp_measured.json()
     assert body_measured["ground_truth_type"] == "measured"
     assert body_measured["real"] == [round(x, 6) for x in np.linspace(0.98, 0.9, 10)]
+    assert "warning" in body_measured
+
+
+def test_predict_extrapolation_warning():
+    class ScalerWithBounds:
+        def __init__(self):
+            self.data_min_ = np.array([1.0, 0.5, 10.0])
+            self.data_max_ = np.array([200.0, 2.0, 40.0])
+        def transform(self, X):
+            return np.asarray(X, dtype=np.float32)
+
+    STATE["scaler"] = ScalerWithBounds()
+    STATE["models"]["baseline_a"] = (DummyModule, DummyModule.load())
+    STATE["models"]["pinn"] = (DummyModule, DummyModule.load())
+
+    # c_rate=5.0 is out of bounds [0.5, 2.0]
+    payload = {
+        "c_rate": 5.0,
+        "temperature": 25.0,
+        "n_cycles": 15,
+    }
+    resp = client.post("/predict", json=payload)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "warning" in body
+    assert body["warning"] is not None
+    assert "Extrapolation warning" in body["warning"]
+
 

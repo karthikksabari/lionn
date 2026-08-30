@@ -56,6 +56,7 @@ class PredictResponse(BaseModel):
     metrics: dict[str, ModelMetrics]
     violations: dict[str, int]
     ground_truth_type: str
+    warning: str | None = None
 
 
 class ProfileInfo(BaseModel):
@@ -169,6 +170,28 @@ def get_profiles() -> dict:
 
 @app.post("/predict", response_model=PredictResponse)
 def predict(req: PredictRequest) -> dict:
+    warning_msg = None
+    scaler = STATE["scaler"]
+    if scaler is not None and hasattr(scaler, "data_min_") and hasattr(scaler, "data_max_"):
+        c_rate_min, c_rate_max = float(scaler.data_min_[1]), float(scaler.data_max_[1])
+        temp_min, temp_max = float(scaler.data_min_[2]), float(scaler.data_max_[2])
+        logger.info(
+            "Request inputs: c_rate=%.4f (trained: [%.4f, %.4f]), temp=%.4f (trained: [%.4f, %.4f])",
+            req.c_rate, c_rate_min, c_rate_max, req.temperature, temp_min, temp_max
+        )
+        if req.c_rate < c_rate_min or req.c_rate > c_rate_max or req.temperature < temp_min or req.temperature > temp_max:
+            warning_msg = (
+                f"Extrapolation warning: Requested conditions (C-rate: {req.c_rate:.2f}C, Temp: {req.temperature:.1f}°C) "
+                f"are outside the model's trained range (C-rate: [{c_rate_min:.2f}, {c_rate_max:.2f}], Temp: [{temp_min:.1f}, {temp_max:.1f}]). "
+                "Extrapolation predictions may be unreliable."
+            )
+            logger.warning(warning_msg)
+            scaled_sample = scaler.transform([[1, req.c_rate, req.temperature]])[0]
+            logger.info(
+                "Scaled inputs (unclamped): cycle_scaled=%.4f, c_rate_scaled=%.4f, temp_scaled=%.4f",
+                scaled_sample[0], scaled_sample[1], scaled_sample[2]
+            )
+
     cycles = np.arange(1, req.n_cycles + 1, dtype=np.float32)
     X_raw = np.stack(
         [
@@ -178,8 +201,6 @@ def predict(req: PredictRequest) -> dict:
         ],
         axis=1,
     )
-
-    scaler = STATE["scaler"]
     X = scaler.transform(X_raw).astype(np.float32) if scaler is not None else X_raw
 
     preds = {}
@@ -226,5 +247,6 @@ def predict(req: PredictRequest) -> dict:
         },
         "violations": results["violations"],
         "ground_truth_type": ground_truth_type,
+        "warning": warning_msg,
     }
 

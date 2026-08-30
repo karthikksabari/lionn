@@ -11,6 +11,7 @@ backend/checkpoints/
 node_modules/
 frontend/dist/
 frontend/.env
+*.tsbuildinfo
 
 # OS
 .DS_Store
