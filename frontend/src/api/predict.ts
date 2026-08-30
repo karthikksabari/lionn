@@ -1,10 +1,9 @@
 // src/api/predict.ts
-import { PredictRequest, PredictResponse, Profile } from '../types';
+import { PredictRequest, PredictResponse, Profile, ProfilesResponse } from '../types';
 import sampleResponse from '../mock/sampleResponse.json';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 
-// ---- Shape of the Backend's response ----
 interface BackendPredictResponse {
   cycles: number[];
   real: number[];
@@ -21,47 +20,53 @@ interface BackendPredictResponse {
 /**
  * Fetches dynamic dataset profiles from GET /profiles
  */
-export async function getProfiles(): Promise<Profile[]> {
+export async function getProfiles(): Promise<ProfilesResponse> {
   try {
     const response = await fetch(`${API_BASE_URL}/profiles`);
     if (!response.ok) {
       throw new Error(`Failed to fetch profiles: ${response.statusText}`);
     }
-    return await response.json();
+    const data = await response.json();
+    // Handle both { profiles: [...] } and direct array formats safely
+    if (Array.isArray(data)) {
+      return { profiles: data };
+    }
+    return data;
   } catch (error) {
     console.warn('Real backend profiles unavailable, using fallback list:', error);
-    return [
-      {
-        id: 'unseen_fast_charge_profile_a',
-        label: 'Unseen Fast-Charge Profile A (3.5C, 45°C)',
-        c_rate: 3.5,
-        ambient_temp_C: 45.0,
-        max_cycles: 1000,
-        split: 'test',
-      },
-      {
-        id: 'unseen_fast_charge_profile_b',
-        label: 'Unseen Fast-Charge Profile B (4.2C, 50°C)',
-        c_rate: 4.2,
-        ambient_temp_C: 50.0,
-        max_cycles: 1000,
-        split: 'test',
-      },
-      {
-        id: 'baseline_ambient_cycle_profile',
-        label: 'Nominal Ambient Cycling (1.0C, 25°C)',
-        c_rate: 1.0,
-        ambient_temp_C: 25.0,
-        max_cycles: 1000,
-        split: 'train',
-      },
-    ];
+    return {
+      profiles: [
+        {
+          profile_id: 'SYNTH_000',
+          label: 'Nominal Standard Profile (1.2C, 35.8°C)',
+          c_rate: 1.1583,
+          temperature: 35.7579,
+          max_cycles: 1000,
+          split: 'train',
+        },
+        {
+          profile_id: 'unseen_fast_charge_profile_a',
+          label: 'Unseen Fast-Charge Profile A (3.5C, 45°C)',
+          c_rate: 3.5,
+          temperature: 45.0,
+          max_cycles: 1000,
+          split: 'test',
+        },
+        {
+          profile_id: 'unseen_fast_charge_profile_b',
+          label: 'Unseen Fast-Charge Profile B (4.2C, 50°C)',
+          c_rate: 4.2,
+          temperature: 50.0,
+          max_cycles: 1000,
+          split: 'test',
+        }
+      ]
+    };
   }
 }
 
 /**
  * Simulates battery degradation dynamics under physics-informed vs unconstrained MLP models.
- * Used as a fallback if the real backend is unreachable or errors.
  */
 function generateDynamicPrediction(request: PredictRequest): PredictResponse {
   const [startCycle, endCycle] = request.cycle_range;
@@ -140,9 +145,6 @@ function generateDynamicPrediction(request: PredictRequest): PredictResponse {
   });
 }
 
-/**
- * Shared metric computation: RMSE, MAPE, Physics Violation Index (%), and RUL.
- */
 function buildResponseFromSeries(
   cycles: number[],
   groundTruth: (number | null)[],
@@ -235,10 +237,6 @@ function buildResponseFromSeries(
   };
 }
 
-/**
- * Calls the real backend.
- * Omits profile_id when in custom mode so the backend generates a simulated reference.
- */
 async function fetchRealPrediction(request: PredictRequest): Promise<PredictResponse> {
   const [, endCycle] = request.cycle_range;
 
@@ -264,7 +262,6 @@ async function fetchRealPrediction(request: PredictRequest): Promise<PredictResp
   }
 
   const data: BackendPredictResponse = await response.json();
-
   const groundTruthType = data.ground_truth_type ?? (payload.profile_id ? 'measured' : 'simulated');
 
   return buildResponseFromSeries(
@@ -276,9 +273,6 @@ async function fetchRealPrediction(request: PredictRequest): Promise<PredictResp
   );
 }
 
-/**
- * Executes battery degradation prediction with automatic fallback.
- */
 export async function predictBatteryHealth(request: PredictRequest): Promise<PredictResponse> {
   try {
     return await fetchRealPrediction(request);

@@ -1,12 +1,16 @@
 // src/types.ts
 
 export interface Profile {
-  id: string;
+  profile_id: string;
   label: string;
   c_rate: number;
-  ambient_temp_C: number;
-  max_cycles: number;
+  temperature: number;
+  max_cycles?: number;
   split?: 'train' | 'test' | 'held_out';
+}
+
+export interface ProfilesResponse {
+  profiles: Profile[];
 }
 
 export interface PredictRequest {

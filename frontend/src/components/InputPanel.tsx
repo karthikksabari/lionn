@@ -31,13 +31,19 @@ export const InputPanel: React.FC<InputPanelProps> = ({
     let isMounted = true;
     getProfiles().then((data) => {
       if (isMounted) {
-        setProfiles(data);
-        if (!selectedProfileId && data.length > 0 && !initialRequest?.profile_id && !initialRequest?.battery_id) {
-          const defaultProfile = data.find((p) => p.split === 'test') || data[0];
-          setSelectedProfileId(defaultProfile.id);
-          setCRate(defaultProfile.c_rate);
-          setAmbientTemp(defaultProfile.ambient_temp_C);
-          setCycleHorizon(defaultProfile.max_cycles);
+        const profileList: Profile[] = Array.isArray(data) ? data : (data?.profiles ?? []);
+        setProfiles(profileList);
+
+        if (!selectedProfileId && profileList.length > 0 && !initialRequest?.profile_id && !initialRequest?.battery_id) {
+          const defaultProfile = profileList.find((p) => p.split === 'test') || profileList[0];
+          if (defaultProfile) {
+            setSelectedProfileId(defaultProfile.profile_id);
+            setCRate(defaultProfile.c_rate);
+            setAmbientTemp(defaultProfile.temperature);
+            if (typeof defaultProfile.max_cycles === 'number') {
+              setCycleHorizon(defaultProfile.max_cycles);
+            }
+          }
         }
       }
     });
@@ -58,10 +64,12 @@ export const InputPanel: React.FC<InputPanelProps> = ({
   }, []);
 
   const handleSelectProfile = (preset: Profile) => {
-    setSelectedProfileId(preset.id);
+    setSelectedProfileId(preset.profile_id);
     setCRate(preset.c_rate);
-    setAmbientTemp(preset.ambient_temp_C);
-    setCycleHorizon(preset.max_cycles);
+    setAmbientTemp(preset.temperature);
+    if (typeof preset.max_cycles === 'number') {
+      setCycleHorizon(preset.max_cycles);
+    }
     setIsPresetOpen(false);
   };
 
@@ -95,7 +103,6 @@ export const InputPanel: React.FC<InputPanelProps> = ({
     });
   };
 
-  // Color-reactive temperature glow calculations
   const { tempGlowStyle, isFreezing, isOverheating, batteryOutlineClass } = useMemo(() => {
     let glowColor = '';
     let glowBlur = 45;
@@ -151,7 +158,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
   const tempPercent = Math.min(100, Math.max(0, ((ambientTemp - (-20)) / (65 - (-20))) * 100));
   const cyclePercent = Math.min(100, Math.max(0, ((cycleHorizon - 100) / (2000 - 100)) * 100));
 
-  const activeProfile = profiles.find((p) => p.id === selectedProfileId);
+  const activeProfile = Array.isArray(profiles) ? profiles.find((p) => p.profile_id === selectedProfileId) : undefined;
   const modeLabel = activeProfile
     ? `Preset: ${activeProfile.label.split('(')[0].trim()}`
     : 'User (Custom)';
@@ -159,7 +166,6 @@ export const InputPanel: React.FC<InputPanelProps> = ({
   return (
     <form onSubmit={handleSubmit} className="w-full max-w-7xl mx-auto h-[78vh] max-h-[820px] flex flex-col justify-center">
       
-      {/* 2-Column Side-by-Side Layout */}
       <div className="w-full h-full flex flex-row items-stretch gap-6">
         
         {/* ================= LEFT COLUMN (~40% Width) ================= */}
@@ -192,15 +198,15 @@ export const InputPanel: React.FC<InputPanelProps> = ({
 
               {isPresetOpen && (
                 <div className="absolute top-11 right-0 z-50 w-80 rounded-2xl bg-white/95 backdrop-blur-xl border border-slate-200 p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.12)] space-y-1 animate-fadeIn max-h-[340px] overflow-y-auto">
-                  {profiles.map((profile) => {
+                  {Array.isArray(profiles) && profiles.map((profile) => {
                     const isHeldOut = profile.split === 'test' || profile.split === 'held_out';
                     return (
                       <button
-                        key={profile.id}
+                        key={profile.profile_id}
                         type="button"
                         onClick={() => handleSelectProfile(profile)}
                         className={`w-full text-left px-3 py-2 rounded-xl text-xs font-['Space_Grotesk'] font-semibold transition-colors flex items-center justify-between gap-2 ${
-                          selectedProfileId === profile.id
+                          selectedProfileId === profile.profile_id
                             ? 'bg-blue-50 text-[#0284c7]'
                             : 'text-slate-700 hover:bg-slate-100'
                         }`}
@@ -213,7 +219,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                             </span>
                           )}
                         </div>
-                        {selectedProfileId === profile.id && <Check className="w-3.5 h-3.5 shrink-0 text-[#0284c7]" />}
+                        {selectedProfileId === profile.profile_id && <Check className="w-3.5 h-3.5 shrink-0 text-[#0284c7]" />}
                       </button>
                     );
                   })}
@@ -316,7 +322,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                   type="range"
                   min="-20"
                   max="65"
-                  step="1"
+                  step="0.1"
                   value={ambientTemp}
                   onMouseDown={() => setActiveSlider('temp')}
                   onMouseUp={() => setActiveSlider(null)}
@@ -332,15 +338,16 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                 />
               </div>
 
-              <div className="flex items-center gap-0.5 font-mono text-sm sm:text-base font-bold text-slate-800 px-4 py-2 rounded-xl bg-slate-50 border border-slate-200 shrink-0 shadow-sm">
+              {/* 1 & 2. Widened input with step="any" */}
+              <div className="flex items-center gap-0.5 font-mono text-sm sm:text-base font-bold text-slate-800 px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 shrink-0 shadow-sm">
                 <input
                   type="number"
+                  step="any"
                   min="-40"
                   max="85"
-                  step="1"
                   value={ambientTemp}
                   onChange={(e) => handleManualTempChange(parseFloat(e.target.value) || 0)}
-                  className="w-12 bg-transparent text-right outline-none font-mono font-bold"
+                  className="w-16 sm:w-20 bg-transparent text-right outline-none font-mono font-bold"
                 />
                 <span className="text-slate-500">°C</span>
               </div>
@@ -383,21 +390,22 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                 />
               </div>
 
-              <div className="flex items-center gap-0.5 font-mono text-sm sm:text-base font-bold text-slate-800 px-4 py-2 rounded-xl bg-slate-50 border border-slate-200 shrink-0 shadow-sm">
+              {/* 1 & 2. Widened input with step="any" */}
+              <div className="flex items-center gap-0.5 font-mono text-sm sm:text-base font-bold text-slate-800 px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 shrink-0 shadow-sm">
                 <input
                   type="number"
+                  step="any"
                   min="0.1"
                   max="10.0"
-                  step="0.1"
                   value={cRate}
                   onChange={(e) => handleManualCRateChange(parseFloat(e.target.value) || 0)}
-                  className="w-12 bg-transparent text-right outline-none font-mono font-bold"
+                  className="w-16 sm:w-20 bg-transparent text-right outline-none font-mono font-bold"
                 />
                 <span className="text-slate-500">C</span>
               </div>
             </div>
 
-            {/* ROW 3: Degradation Horizon Target */}
+            {/* ROW 3: Degradation Horizon Target (Integer Only) */}
             <div className="h-[135px] rounded-[36px] bg-white border border-slate-200/90 px-8 py-5 flex items-center justify-between gap-6 shadow-[0_4px_16px_rgba(0,0,0,0.02)]">
               <div className="flex items-center gap-3.5 w-48 sm:w-56 shrink-0">
                 <div className="w-11 h-11 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center text-[#0284c7] shrink-0 shadow-sm">
