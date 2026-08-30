@@ -88,6 +88,7 @@ def test_profiles_endpoint():
     assert "label" in p1
     assert p1["c_rate"] == 1.0
     assert p1["temperature"] == 25.0
+    assert p1["max_cycles"] == 1
     assert p1["split"] in ("train", "test")
 
 
