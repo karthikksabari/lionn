@@ -106,11 +106,9 @@ if __name__ == "__main__":
         from torch.utils.data import DataLoader, TensorDataset
 
         def create_sequences(X, y, window_size=10):
-            Xs, ys = [], []
-            for i in range(len(X) - window_size):
-                Xs.append(X[i:i+window_size])
-                ys.append(y[i+window_size])
-            return np.array(Xs), np.array(ys)
+            Xs = np.repeat(X[:, np.newaxis, :], window_size, axis=1)
+            ys = y.reshape(-1, 1)
+            return Xs, ys
 
         X_train_seq, y_train_seq = create_sequences(X_train, y_train, window_size=10)
 
@@ -120,7 +118,7 @@ if __name__ == "__main__":
 
         model = physics_lstm.PhysicsLSTM(input_size=X.shape[2])
         criterion = nn.MSELoss()
-        optimiser = torch.optim.Adam(model.parameters(), lr=1e-3)
+        optimiser = torch.optim.Adam(model.parameters(), lr=3e-3)
         loader = DataLoader(TensorDataset(X, y), batch_size=64, shuffle=False)
 
         model.train()
@@ -129,7 +127,7 @@ if __name__ == "__main__":
             for xb, yb in loader:
                 optimiser.zero_grad()
                 pred = model(xb)
-                loss = physics_lstm.physics_informed_loss(pred, yb, lambda_weight=0.01)
+                loss = physics_lstm.physics_informed_loss(pred, yb, lambda_weight=0.001)
                 loss.backward()
                 optimiser.step()
                 epoch_loss += loss.item() * xb.shape[0]
