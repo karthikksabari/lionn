@@ -1,354 +1,430 @@
-// src/components/Battery3D.tsx
-import React, { useEffect, useRef } from 'react';
-import * as THREE from 'three';
+// src/components/InputPanel.tsx
+import React, { useState, useMemo, useRef, useEffect } from 'react';
+import gsap from 'gsap';
+import { PredictRequest, Profile } from '../types';
+import { getProfiles } from '../api/predict';
+import { useMagnetic } from '../hooks/useMagnetic';
+import { Battery3D } from './Battery3D';
+import { ArrowRight, ChevronDown, Check, Gauge, Activity, Infinity as InfinityIcon } from 'lucide-react';
 
-export interface Battery3DProps {
-  chargeLevel: number; // 0.0 to 1.0
-  temperatureC: number;
-  cycleHorizon?: number; // 100 to 2000+
+export interface InputPanelProps {
+  onRunPrediction: (request: PredictRequest) => void;
+  isLoading: boolean;
+  initialRequest?: PredictRequest;
 }
 
-// Clean temperature color stops
-const COLOR_FROST_BLUE = new THREE.Color('#0284c7');  // Sub-zero Ice Blue (< 0°C)
-const COLOR_CYAN       = new THREE.Color('#06b6d4');  // Cool Cyan (10°C)
-const COLOR_EMERALD    = new THREE.Color('#10b981');  // Optimal Emerald Green (25°C)
-const COLOR_AMBER      = new THREE.Color('#f59e0b');  // Warm Amber (42°C)
-const COLOR_RED        = new THREE.Color('#ef4444');  // Hot Crimson Red (55°C+)
-
-/**
- * Generates an internal studio environment map so chrome and silver surfaces
- * always reflect bright white/soft-slate studio lighting rather than black.
- */
-function createStudioEnvironment(renderer: THREE.WebGLRenderer): THREE.WebGLRenderTarget {
-  const pmremGenerator = new THREE.PMREMGenerator(renderer);
-  pmremGenerator.compileEquirectangularShader();
-
-  const envScene = new THREE.Scene();
-  envScene.background = new THREE.Color('#ffffff');
-
-  // Studio overhead softbox
-  const light1 = new THREE.DirectionalLight(0xffffff, 4.0);
-  light1.position.set(0, 10, 0);
-  envScene.add(light1);
-
-  // Key and fill lights for side specular highlights
-  const light2 = new THREE.DirectionalLight(0xe0f2fe, 3.0);
-  light2.position.set(5, 3, 5);
-  envScene.add(light2);
-
-  const light3 = new THREE.DirectionalLight(0xffffff, 2.5);
-  light3.position.set(-5, 2, -5);
-  envScene.add(light3);
-
-  const renderTarget = pmremGenerator.fromScene(envScene, 0.04);
-  pmremGenerator.dispose();
-  return renderTarget;
-}
-
-/**
- * Creates the exact, crisp 3D lightning bolt geometry from the reference
- */
-function createReferenceLightningGeometry(): THREE.ExtrudeGeometry {
-  const shape = new THREE.Shape();
-  // Precise contour matching the reference graphic
-  shape.moveTo(0.06, 0.62);     // Top apex
-  shape.lineTo(-0.24, 0.02);    // Upper inner angle
-  shape.lineTo(-0.03, 0.02);    // Center shelf
-  shape.lineTo(-0.18, -0.62);   // Bottom point
-  shape.lineTo(0.24, -0.02);    // Lower outer angle
-  shape.lineTo(0.03, -0.02);    // Lower shelf
-  shape.closePath();
-
-  return new THREE.ExtrudeGeometry(shape, {
-    depth: 0.04,
-    bevelEnabled: true,
-    bevelSegments: 4,
-    steps: 1,
-    bevelSize: 0.014,
-    bevelThickness: 0.016,
-  });
-}
-
-export const Battery3D: React.FC<Battery3DProps> = ({
-  chargeLevel,
-  temperatureC,
-  cycleHorizon = 1000,
+export const InputPanel: React.FC<InputPanelProps> = ({
+  onRunPrediction,
+  isLoading,
+  initialRequest,
 }) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const stateRef = useRef({ chargeLevel, temperatureC, cycleHorizon });
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(
+    initialRequest?.profile_id ?? initialRequest?.battery_id ?? null
+  );
+  const [cRate, setCRate] = useState<number>(initialRequest?.c_rate ?? 3.5);
+  const [ambientTemp, setAmbientTemp] = useState<number>(initialRequest?.ambient_temp_C ?? 45.0);
+  const [cycleHorizon, setCycleHorizon] = useState<number>(initialRequest?.cycle_range?.[1] ?? 1000);
+  
+  const [isPresetOpen, setIsPresetOpen] = useState<boolean>(false);
+  const [activeSlider, setActiveSlider] = useState<string | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const inputRowsContainerRef = useRef<HTMLDivElement>(null);
+
+  const runBtnRef = useMagnetic<HTMLButtonElement>(0.2);
 
   useEffect(() => {
-    stateRef.current = { chargeLevel, temperatureC, cycleHorizon };
-  }, [chargeLevel, temperatureC, cycleHorizon]);
+    if (!inputRowsContainerRef.current) return;
+    const ctx = gsap.context(() => {
+      gsap.fromTo(
+        '.gsap-input-row',
+        { opacity: 0, x: 20 },
+        {
+          opacity: 1,
+          x: 0,
+          duration: 0.45,
+          stagger: 0.08,
+          ease: 'power2.out',
+        }
+      );
+    }, inputRowsContainerRef);
+
+    return () => ctx.revert();
+  }, []);
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
+    let isMounted = true;
+    getProfiles()
+      .then((data) => {
+        if (isMounted && data) {
+          const profileList: Profile[] = Array.isArray(data) ? data : (data?.profiles ?? []);
+          setProfiles(profileList);
 
-    // 1. Scene & Camera Setup
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(
-      36,
-      container.clientWidth / container.clientHeight,
-      0.1,
-      100
-    );
-    camera.position.set(0, 0.05, 5.2);
-
-    // 2. WebGL Renderer with High-Luminance Tonemapping
-    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-    renderer.setSize(container.clientWidth, container.clientHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.25;
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    container.appendChild(renderer.domElement);
-
-    // 3. Studio Environment Map for Chrome Reflection
-    const studioEnv = createStudioEnvironment(renderer);
-    scene.environment = studioEnv.texture;
-
-    // 4. Lighting Rig
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.4);
-    scene.add(ambientLight);
-
-    const keyLight = new THREE.DirectionalLight(0xffffff, 2.5);
-    keyLight.position.set(4, 8, 5);
-    keyLight.castShadow = true;
-    keyLight.shadow.mapSize.width = 1024;
-    keyLight.shadow.mapSize.height = 1024;
-    keyLight.shadow.bias = -0.0005;
-    scene.add(keyLight);
-
-    const fillLight = new THREE.DirectionalLight(0xf0f9ff, 1.8);
-    fillLight.position.set(-4, 0, 4);
-    scene.add(fillLight);
-
-    const bottomBounce = new THREE.DirectionalLight(0xffffff, 1.2);
-    bottomBounce.position.set(0, -4, 2);
-    scene.add(bottomBounce);
-
-    const internalLight = new THREE.PointLight(0x10b981, 3.2, 5.0);
-    internalLight.position.set(0, 0, 0.4);
-    scene.add(internalLight);
-
-    // 5. 3D Studio Stage Floor & Background
-    const stageGroup = new THREE.Group();
-    scene.add(stageGroup);
-
-    // Pedestal floor disk
-    const plinthGeo = new THREE.CylinderGeometry(1.4, 1.55, 0.12, 48);
-    const plinthMat = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      roughness: 0.15,
-      metalness: 0.05,
-    });
-    const plinthMesh = new THREE.Mesh(plinthGeo, plinthMat);
-    plinthMesh.position.set(0, -1.34, 0);
-    plinthMesh.receiveShadow = true;
-    stageGroup.add(plinthMesh);
-
-    // Soft drop shadow
-    const shadowGeo = new THREE.RingGeometry(0.15, 0.95, 32);
-    const shadowMat = new THREE.MeshBasicMaterial({
-      color: 0x64748b,
-      transparent: true,
-      opacity: 0.14,
-      side: THREE.DoubleSide,
-    });
-    const shadowMesh = new THREE.Mesh(shadowGeo, shadowMat);
-    shadowMesh.rotation.x = Math.PI / 2;
-    shadowMesh.position.set(0, -1.27, 0);
-    stageGroup.add(shadowMesh);
-
-    // 6. Battery Geometry & Chrome Assembly
-    const totalHeight = 2.15;
-    const outerRadius = 0.78;
-    const innerRadius = 0.73;
-
-    const batteryGroup = new THREE.Group();
-    batteryGroup.position.set(0, -0.05, 0);
-    scene.add(batteryGroup);
-
-    // Bright White Polished Silver/Chrome Material
-    const brightSilverMat = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      metalness: 0.85,
-      roughness: 0.15,
-      emissive: 0x333333,
-      emissiveIntensity: 0.15,
-    });
-
-    // Top Terminal Positive Button Nub
-    const nubGeo = new THREE.CylinderGeometry(0.24, 0.24, 0.18, 32);
-    const nubMesh = new THREE.Mesh(nubGeo, brightSilverMat);
-    nubMesh.position.set(0, totalHeight / 2 + 0.18, 0);
-    nubMesh.castShadow = true;
-    batteryGroup.add(nubMesh);
-
-    // Top Stepped Washer
-    const washerGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.06, 32);
-    const washerMesh = new THREE.Mesh(washerGeo, brightSilverMat);
-    washerMesh.position.set(0, totalHeight / 2 + 0.09, 0);
-    batteryGroup.add(washerMesh);
-
-    // Top Bright Silver Cap
-    const topCapGeo = new THREE.CylinderGeometry(outerRadius, outerRadius, 0.22, 48);
-    const topCapMesh = new THREE.Mesh(topCapGeo, brightSilverMat);
-    topCapMesh.position.set(0, totalHeight / 2, 0);
-    topCapMesh.castShadow = true;
-    batteryGroup.add(topCapMesh);
-
-    // Bottom Bright Silver Base
-    const bottomCapGeo = new THREE.CylinderGeometry(outerRadius, outerRadius, 0.22, 48);
-    const bottomCapMesh = new THREE.Mesh(bottomCapGeo, brightSilverMat);
-    bottomCapMesh.position.set(0, -totalHeight / 2, 0);
-    bottomCapMesh.castShadow = true;
-    batteryGroup.add(bottomCapMesh);
-
-    // Inner Liquid Core
-    const liquidGeo = new THREE.CylinderGeometry(innerRadius, innerRadius, 1, 32);
-    const liquidMat = new THREE.MeshStandardMaterial({
-      color: COLOR_EMERALD,
-      emissive: COLOR_EMERALD,
-      emissiveIntensity: 0.65,
-      roughness: 0.12,
-      metalness: 0.05,
-    });
-    const liquidMesh = new THREE.Mesh(liquidGeo, liquidMat);
-    liquidMesh.position.set(0, -totalHeight / 2, 0);
-    batteryGroup.add(liquidMesh);
-
-    // Outer Glass Sleeve with Highlight Streak
-    const glassGeo = new THREE.CylinderGeometry(outerRadius, outerRadius, totalHeight - 0.2, 48);
-    const glassMat = new THREE.MeshPhysicalMaterial({
-      transmission: 0.92,
-      transparent: true,
-      opacity: 0.35,
-      roughness: 0.04,
-      ior: 1.48,
-      thickness: 0.45,
-      color: 0xffffff,
-      clearcoat: 1.0,
-      clearcoatRoughness: 0.04,
-      depthWrite: false,
-    });
-    const glassMesh = new THREE.Mesh(glassGeo, glassMat);
-    glassMesh.castShadow = true;
-    batteryGroup.add(glassMesh);
-
-    // Exact Silver Beveled Lightning Bolt Emblem
-    const lightningGeo = createReferenceLightningGeometry();
-    const lightningMat = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      metalness: 0.95,
-      roughness: 0.12,
-      emissive: 0xffffff,
-      emissiveIntensity: 0.35,
-    });
-    const lightningMesh = new THREE.Mesh(lightningGeo, lightningMat);
-    lightningMesh.scale.set(1.08, 1.08, 1.08);
-    lightningMesh.position.set(0, 0, outerRadius + 0.038);
-    lightningMesh.castShadow = true;
-    batteryGroup.add(lightningMesh);
-
-    // 7. Interactive Parallax Handling
-    let targetRotY = 0;
-    let targetRotX = 0;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      const rect = container.getBoundingClientRect();
-      const x = (e.clientX - rect.left) / rect.width - 0.5;
-      const y = (e.clientY - rect.top) / rect.height - 0.5;
-      targetRotY = x * 0.35;
-      targetRotX = y * 0.2;
-    };
-    container.addEventListener('mousemove', handleMouseMove);
-
-    // 8. Animation & Clean Color Transition Loop
-    let animationFrameId: number;
-    const clock = new THREE.Clock();
-    const activeColor = new THREE.Color();
-
-    const animate = () => {
-      animationFrameId = requestAnimationFrame(animate);
-      const time = clock.getElapsedTime();
-      const { chargeLevel: fill, temperatureC: temp } = stateRef.current;
-
-      // Multi-stop clean progression: Frost Blue -> Cyan -> Emerald Green -> Amber -> Racing Red
-      if (temp <= 5) {
-        const t = Math.min(1, Math.max(0, (temp - (-20)) / (5 - (-20))));
-        activeColor.lerpColors(COLOR_FROST_BLUE, COLOR_CYAN, t);
-      } else if (temp <= 25) {
-        const t = (temp - 5) / (25 - 5);
-        activeColor.lerpColors(COLOR_CYAN, COLOR_EMERALD, t);
-      } else if (temp <= 45) {
-        const t = (temp - 25) / (45 - 25);
-        activeColor.lerpColors(COLOR_EMERALD, COLOR_AMBER, t);
-      } else {
-        const t = Math.min(1, (temp - 45) / (65 - 45));
-        activeColor.lerpColors(COLOR_AMBER, COLOR_RED, t);
-      }
-
-      liquidMat.color.copy(activeColor);
-      liquidMat.emissive.copy(activeColor);
-      internalLight.color.copy(activeColor);
-
-      // Fluid Fill Scale & Wave Motion
-      const clampedFill = Math.min(1.0, Math.max(0.06, fill));
-      const wave = Math.sin(time * 2.2) * 0.014;
-      const targetHeight = Math.max(0.08, (totalHeight - 0.22) * clampedFill + wave);
-
-      liquidMesh.scale.set(1, targetHeight, 1);
-      liquidMesh.position.y = -totalHeight / 2 + 0.1 + targetHeight / 2;
-
-      // Smooth Parallax Sway
-      batteryGroup.rotation.y += (targetRotY - batteryGroup.rotation.y) * 0.08;
-      batteryGroup.rotation.x += (targetRotX - batteryGroup.rotation.x) * 0.08;
-
-      renderer.render(scene, camera);
-    };
-
-    animate();
-
-    // 9. Resize & Cleanup
-    const handleResize = () => {
-      if (!container) return;
-      camera.aspect = container.clientWidth / container.clientHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(container.clientWidth, container.clientHeight);
-    };
-    window.addEventListener('resize', handleResize);
+          if (!selectedProfileId && profileList.length > 0 && !initialRequest?.profile_id && !initialRequest?.battery_id) {
+            const defaultProfile = profileList.find((p) => p.split === 'test') || profileList[0];
+            if (defaultProfile) {
+              setSelectedProfileId(defaultProfile.profile_id);
+              setCRate(defaultProfile.c_rate);
+              setAmbientTemp(defaultProfile.temperature);
+              if (typeof defaultProfile.max_cycles === 'number') {
+                setCycleHorizon(defaultProfile.max_cycles);
+              }
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn('Backend profiles not yet reachable:', err);
+      });
 
     return () => {
-      container.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('resize', handleResize);
-      cancelAnimationFrame(animationFrameId);
-      studioEnv.dispose();
-      renderer.dispose();
-      plinthGeo.dispose();
-      shadowGeo.dispose();
-      nubGeo.dispose();
-      washerGeo.dispose();
-      topCapGeo.dispose();
-      bottomCapGeo.dispose();
-      liquidGeo.dispose();
-      glassGeo.dispose();
-      lightningGeo.dispose();
-      if (container.contains(renderer.domElement)) {
-        container.removeChild(renderer.domElement);
-      }
+      isMounted = false;
     };
   }, []);
 
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsPresetOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleSelectProfile = (preset: Profile) => {
+    setSelectedProfileId(preset.profile_id);
+    setCRate(preset.c_rate);
+    setAmbientTemp(preset.temperature);
+    if (typeof preset.max_cycles === 'number') {
+      setCycleHorizon(preset.max_cycles);
+    }
+    setIsPresetOpen(false);
+  };
+
+  const handleSelectCustom = () => {
+    setSelectedProfileId(null);
+    setIsPresetOpen(false);
+  };
+
+  const handleManualCRateChange = (val: number) => {
+    setSelectedProfileId(null);
+    setCRate(val);
+  };
+
+  const handleManualTempChange = (val: number) => {
+    setSelectedProfileId(null);
+    setAmbientTemp(val);
+  };
+
+  const handleManualCycleChange = (val: number) => {
+    setSelectedProfileId(null);
+    setCycleHorizon(Math.max(1, Math.round(val)));
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onRunPrediction({
+      ...(selectedProfileId ? { profile_id: selectedProfileId, battery_id: selectedProfileId } : {}),
+      c_rate: Number(cRate),
+      ambient_temp_C: Number(ambientTemp),
+      cycle_range: [0, Math.round(Number(cycleHorizon))],
+    });
+  };
+
+  const chargeLevel = useMemo(() => {
+    return Math.min(1.0, Math.max(0.1, cRate / 5.0));
+  }, [cRate]);
+
+  const cRatePercent = Math.min(100, Math.max(0, ((cRate - 0.5) / (5.0 - 0.5)) * 100));
+  const tempPercent = Math.min(100, Math.max(0, ((ambientTemp - (-20)) / (65 - (-20))) * 100));
+  const cyclePercent = Math.min(100, Math.max(0, ((cycleHorizon - 1) / (2000 - 1)) * 100));
+
+  const activeProfile = Array.isArray(profiles) ? profiles.find((p) => p.profile_id === selectedProfileId) : undefined;
+  const modeLabel = activeProfile
+    ? `Preset: ${activeProfile.label.split('(')[0].trim()}`
+    : 'User (Custom)';
+
   return (
-    <div
-      ref={containerRef}
-      className="w-full h-full relative cursor-grab active:cursor-grabbing rounded-[28px] overflow-hidden"
-      style={{
-        background: 'radial-gradient(ellipse at 50% 35%, #ffffff 0%, #f8fafc 55%, #e2e8f0 100%)',
-      }}
-    />
+    <form onSubmit={handleSubmit} className="w-full max-w-7xl mx-auto h-[78vh] max-h-[820px] flex flex-col justify-center">
+      
+      <div className="w-full h-full flex flex-row items-stretch gap-6">
+        
+        {/* ================= LEFT COLUMN ================= */}
+        <div className="w-[40%] h-full rounded-[32px] bg-slate-900/[0.04] backdrop-blur-[24px] border border-white/70 p-6 flex flex-col justify-between shadow-[0_16px_40px_rgba(2,132,199,0.06)] overflow-hidden">
+          
+          <div className="flex items-center justify-between gap-3 shrink-0">
+            <div className="flex flex-col">
+              <span className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-slate-400">
+                Operating Mode
+              </span>
+              <span className="text-xs font-['Space_Grotesk'] font-bold text-slate-800 truncate max-w-[170px]">
+                {modeLabel}
+              </span>
+            </div>
+
+            <div className="relative" ref={dropdownRef}>
+              <button
+                type="button"
+                onClick={() => setIsPresetOpen(!isPresetOpen)}
+                className={`h-[38px] px-4 rounded-full border text-xs font-['Space_Grotesk'] font-bold tracking-wider uppercase transition-all flex items-center gap-1.5 shadow-sm ${
+                  activeProfile
+                    ? 'bg-[#0284c7] text-white border-[#0284c7] shadow-[0_4px_12px_rgba(2,132,199,0.25)]'
+                    : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'
+                }`}
+              >
+                <span>Preset</span>
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isPresetOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {isPresetOpen && (
+                <div className="absolute top-11 right-0 z-50 w-80 rounded-2xl bg-white/95 backdrop-blur-xl border border-slate-200 p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.12)] space-y-1 animate-fadeIn max-h-[340px] overflow-y-auto">
+                  {Array.isArray(profiles) && profiles.map((profile) => {
+                    const isHeldOut = profile.split === 'test' || profile.split === 'held_out';
+                    return (
+                      <button
+                        key={profile.profile_id}
+                        type="button"
+                        onClick={() => handleSelectProfile(profile)}
+                        className={`w-full text-left px-3 py-2 rounded-xl text-xs font-['Space_Grotesk'] font-semibold transition-colors flex items-center justify-between gap-2 ${
+                          selectedProfileId === profile.profile_id
+                            ? 'bg-blue-50 text-[#0284c7]'
+                            : 'text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <span className="truncate">{profile.label}</span>
+                          {isHeldOut && (
+                            <span className="px-1.5 py-0.5 rounded bg-sky-100 text-[#0284c7] text-[9px] font-mono font-bold tracking-wide uppercase shrink-0">
+                              OOD Test
+                            </span>
+                          )}
+                        </div>
+                        {selectedProfileId === profile.profile_id && <Check className="w-3.5 h-3.5 shrink-0 text-[#0284c7]" />}
+                      </button>
+                    );
+                  })}
+
+                  <div className="border-t border-slate-100 pt-1 mt-1">
+                    <button
+                      type="button"
+                      onClick={handleSelectCustom}
+                      className={`w-full text-left px-3 py-2 rounded-xl text-xs font-['Space_Grotesk'] font-semibold transition-colors flex items-center justify-between ${
+                        selectedProfileId === null
+                          ? 'bg-blue-50 text-[#0284c7]'
+                          : 'text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <span>Custom Scenario (Manual)</span>
+                      {selectedProfileId === null && <Check className="w-3.5 h-3.5 shrink-0 text-[#0284c7]" />}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="relative my-auto w-full max-w-[390px] mx-auto h-[78%] max-h-[640px] rounded-[32px] bg-gradient-to-b from-white/95 via-slate-50/80 to-slate-100/90 backdrop-blur-2xl border border-white/80 p-2 flex flex-col items-center justify-center shadow-[0_20px_50px_rgba(2,132,199,0.08),0_1px_2px_rgba(255,255,255,0.9)_inset] overflow-hidden">
+            <Battery3D
+              chargeLevel={chargeLevel}
+              temperatureC={ambientTemp}
+              cycleHorizon={cycleHorizon}
+            />
+          </div>
+
+          <div className="pt-2 text-center shrink-0">
+            <span className="font-mono text-xs font-semibold text-slate-500 tracking-wider">
+              Target: <strong className="text-slate-800">{cycleHorizon} cycles</strong>
+            </span>
+          </div>
+
+        </div>
+
+        {/* ================= RIGHT COLUMN ================= */}
+        <div className="w-[60%] h-full rounded-[32px] bg-slate-900/[0.04] backdrop-blur-[24px] border border-white/70 p-6 sm:p-8 flex flex-col justify-between shadow-[0_16px_40px_rgba(2,132,199,0.06)]">
+          
+          <div ref={inputRowsContainerRef} className="flex-1 flex flex-col justify-center gap-5">
+            
+            {/* ROW 1: Ambient Temperature */}
+            <div className="gsap-input-row h-[135px] rounded-[36px] bg-white border border-slate-200/90 px-8 py-5 flex items-center justify-between gap-6 shadow-[0_4px_16px_rgba(0,0,0,0.02)]">
+              <div className="flex items-center gap-3.5 w-48 sm:w-56 shrink-0">
+                <div className="w-11 h-11 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center text-[#0284c7] shrink-0 shadow-sm">
+                  <Gauge className="w-5 h-5 stroke-[2]" />
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-sm sm:text-base font-['Space_Grotesk'] font-bold uppercase tracking-wider text-slate-800 leading-tight">
+                    Ambient Temp
+                  </span>
+                  <span className="text-xs font-mono text-slate-400 font-medium">
+                    Operating climate
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex-1 px-4">
+                <input
+                  type="range"
+                  min="-20"
+                  max="65"
+                  step="0.1"
+                  value={ambientTemp}
+                  onMouseDown={() => setActiveSlider('temp')}
+                  onMouseUp={() => setActiveSlider(null)}
+                  onTouchStart={() => setActiveSlider('temp')}
+                  onTouchEnd={() => setActiveSlider(null)}
+                  onChange={(e) => handleManualTempChange(parseFloat(e.target.value))}
+                  style={{
+                    background: `linear-gradient(to right, #0284c7 0%, #0284c7 ${tempPercent}%, #e2e8f0 ${tempPercent}%, #e2e8f0 100%)`
+                  }}
+                  className={`w-full h-3 rounded-lg appearance-none cursor-pointer accent-[#0284c7] transition-all ${
+                    activeSlider === 'temp' ? 'scale-y-125' : ''
+                  }`}
+                />
+              </div>
+
+              <div className="flex items-center gap-0.5 font-mono text-sm sm:text-base font-bold text-slate-800 px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 shrink-0 shadow-sm">
+                <input
+                  type="number"
+                  step="any"
+                  min="-40"
+                  max="85"
+                  value={ambientTemp}
+                  onChange={(e) => handleManualTempChange(parseFloat(e.target.value) || 0)}
+                  className="w-16 sm:w-20 bg-transparent text-right outline-none font-mono font-bold"
+                />
+                <span className="text-slate-500">°C</span>
+              </div>
+            </div>
+
+            {/* ROW 2: Charge Rate (C-Rate) */}
+            <div className="gsap-input-row h-[135px] rounded-[36px] bg-white border border-slate-200/90 px-8 py-5 flex items-center justify-between gap-6 shadow-[0_4px_16px_rgba(0,0,0,0.02)]">
+              <div className="flex items-center gap-3.5 w-48 sm:w-56 shrink-0">
+                <div className="w-11 h-11 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center text-[#0284c7] shrink-0 shadow-sm">
+                  <Activity className="w-5 h-5 stroke-[2]" />
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-sm sm:text-base font-['Space_Grotesk'] font-bold uppercase tracking-wider text-slate-800 leading-tight">
+                    Charge Rate
+                  </span>
+                  <span className="text-xs font-mono text-slate-400 font-medium">
+                    Current draw
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex-1 px-4">
+                <input
+                  type="range"
+                  min="0.5"
+                  max="5.0"
+                  step="0.01"
+                  value={cRate}
+                  onMouseDown={() => setActiveSlider('crate')}
+                  onMouseUp={() => setActiveSlider(null)}
+                  onTouchStart={() => setActiveSlider('crate')}
+                  onTouchEnd={() => setActiveSlider(null)}
+                  onChange={(e) => handleManualCRateChange(parseFloat(e.target.value))}
+                  style={{
+                    background: `linear-gradient(to right, #0284c7 0%, #0284c7 ${cRatePercent}%, #e2e8f0 ${cRatePercent}%, #e2e8f0 100%)`
+                  }}
+                  className={`w-full h-3 rounded-lg appearance-none cursor-pointer accent-[#0284c7] transition-all ${
+                    activeSlider === 'crate' ? 'scale-y-125' : ''
+                  }`}
+                />
+              </div>
+
+              <div className="flex items-center gap-0.5 font-mono text-sm sm:text-base font-bold text-slate-800 px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 shrink-0 shadow-sm">
+                <input
+                  type="number"
+                  step="any"
+                  min="0.1"
+                  max="10.0"
+                  value={cRate}
+                  onChange={(e) => handleManualCRateChange(parseFloat(e.target.value) || 0)}
+                  className="w-16 sm:w-20 bg-transparent text-right outline-none font-mono font-bold"
+                />
+                <span className="text-slate-500">C</span>
+              </div>
+            </div>
+
+            {/* ROW 3: Cycle Horizon Target (Exact Step of 1 from 1 to 2000+) */}
+            <div className="gsap-input-row h-[135px] rounded-[36px] bg-white border border-slate-200/90 px-8 py-5 flex items-center justify-between gap-6 shadow-[0_4px_16px_rgba(0,0,0,0.02)]">
+              <div className="flex items-center gap-3.5 w-48 sm:w-56 shrink-0">
+                <div className="w-11 h-11 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center text-[#0284c7] shrink-0 shadow-sm">
+                  <InfinityIcon className="w-5 h-5 stroke-[2]" />
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-sm sm:text-base font-['Space_Grotesk'] font-bold uppercase tracking-wider text-slate-800 leading-tight">
+                    Cycle Horizon
+                  </span>
+                  <span className="text-xs font-mono text-slate-400 font-medium">
+                    Target lifespan
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex-1 px-4">
+                <input
+                  type="range"
+                  min="1"
+                  max="2000"
+                  step="1"
+                  value={cycleHorizon}
+                  onMouseDown={() => setActiveSlider('cycle')}
+                  onMouseUp={() => setActiveSlider(null)}
+                  onTouchStart={() => setActiveSlider('cycle')}
+                  onTouchEnd={() => setActiveSlider(null)}
+                  onChange={(e) => handleManualCycleChange(parseInt(e.target.value, 10))}
+                  style={{
+                    background: `linear-gradient(to right, #0284c7 0%, #0284c7 ${cyclePercent}%, #e2e8f0 ${cyclePercent}%, #e2e8f0 100%)`
+                  }}
+                  className={`w-full h-3 rounded-lg appearance-none cursor-pointer accent-[#0284c7] transition-all ${
+                    activeSlider === 'cycle' ? 'scale-y-125' : ''
+                  }`}
+                />
+              </div>
+
+              <div className="flex items-center gap-0.5 font-mono text-sm sm:text-base font-bold text-slate-800 px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 shrink-0 shadow-sm">
+                <input
+                  type="number"
+                  min="1"
+                  max="5000"
+                  step="1"
+                  value={cycleHorizon}
+                  onChange={(e) => handleManualCycleChange(parseInt(e.target.value, 10) || 1)}
+                  className="w-16 bg-transparent text-right outline-none font-mono font-bold"
+                />
+                <span className="text-slate-500">Cycles</span>
+              </div>
+            </div>
+
+          </div>
+
+          {/* Run Diagnostics Button */}
+          <div className="w-full pt-4">
+            <button
+              ref={runBtnRef}
+              type="submit"
+              disabled={isLoading}
+              className="group relative w-full h-[74px] flex items-center justify-center rounded-full border border-white/60 bg-[#0284c7] text-white shadow-[0_12px_28px_-6px_rgba(2,132,199,0.4)] hover:shadow-[0_16px_36px_-4px_rgba(2,132,199,0.6)] active:scale-[0.99] transition-colors duration-300 overflow-hidden cursor-pointer disabled:opacity-50"
+            >
+              <span 
+                className="absolute inset-0 bg-gradient-to-r from-[#0284c7] via-[#38bdf8] to-[#2563eb] translate-x-[-100%] group-hover:translate-x-0 transition-transform duration-500 ease-out pointer-events-none" 
+              />
+
+              <span className="relative z-10 flex items-center gap-3 text-base font-['Space_Grotesk'] font-bold tracking-[0.16em] uppercase text-white select-none">
+                <span>{isLoading ? 'Solving Coupled PDEs...' : 'Run Diagnostics'}</span>
+                {!isLoading && <ArrowRight className="w-5 h-5 transition-transform group-hover:translate-x-1.5" />}
+              </span>
+            </button>
+          </div>
+
+        </div>
+
+      </div>
+
+    </form>
   );
 };
+
+export default InputPanel;
