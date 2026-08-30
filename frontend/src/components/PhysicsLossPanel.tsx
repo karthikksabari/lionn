@@ -12,7 +12,11 @@ import {
 import { Sparkles } from 'lucide-react';
 
 export interface PhysicsLossPanelProps {
-  physicsLossTrace?: number[] | { epoch: number; dataLoss?: number; physicsLoss?: number }[];
+  physicsLossTrace?: {
+    epoch: number[];
+    data_loss: number[];
+    physics_loss: number[];
+  } | number[] | { epoch: number; dataLoss?: number; physicsLoss?: number }[];
   loss_trace?: number[];
   [key: string]: any;
 }
@@ -24,6 +28,15 @@ export const PhysicsLossPanel: React.FC<PhysicsLossPanelProps> = ({
   // Construct a dual-loss convergence series (300 epochs) spanning log orders 0.8 -> 0.0001
   const chartData = useMemo(() => {
     const rawTrace = physicsLossTrace ?? loss_trace;
+
+    if (rawTrace && !Array.isArray(rawTrace) && Array.isArray((rawTrace as any).epoch)) {
+      const trace = rawTrace as { epoch: number[]; data_loss: number[]; physics_loss: number[] };
+      return trace.epoch.map((ep, i) => ({
+        epoch: ep,
+        dataLoss: trace.data_loss[i] ?? 0.0,
+        physicsLoss: trace.physics_loss[i] ?? 0.0,
+      }));
+    }
 
     if (Array.isArray(rawTrace) && rawTrace.length > 0 && typeof rawTrace[0] === 'object') {
       return rawTrace;

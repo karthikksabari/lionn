@@ -11,9 +11,12 @@ from backend.api.app import STATE
 @pytest.fixture(autouse=True)
 def reset_state() -> Generator[None, None, None]:
     """Reset global STATE before and after each test."""
+    initial = {"scaler": None, "models": {}, "raw": None}
     STATE.clear()
+    STATE.update(initial)
     yield
     STATE.clear()
+    STATE.update(initial)
 
 
 @pytest.fixture
