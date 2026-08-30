@@ -206,7 +206,7 @@ export const App: React.FC = () => {
     Math.max(0, (finalPredictedCapacity / ratedCapacity) * 100)
   );
   const isSafeOperating = currentSohPercent >= 80.0;
-  const pinnRulCycles = predictionData?.rul?.pinn_cycles ?? (predictionData?.rul as any)?.rul_pinn ?? 920;
+  const pinnRulCycles = predictionData?.rul?.rul_pinn ?? 920;
 
   return (
     <div className="min-h-screen font-sans selection:bg-blue-500/30 selection:text-blue-900 bg-white text-slate-800">
