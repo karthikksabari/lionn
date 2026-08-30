@@ -3,7 +3,7 @@ import torch
 from fastapi import APIRouter, HTTPException
 
 from backend.data.loader import FEATURE_COLS, load_processed
-from backend.models import baseline_a, physics_lstm, pinn
+from backend.models import baseline_a, physics_lstm
 from backend.utils.metrics import mae, physics_metrics, rmse
 
 compare_router = APIRouter()
@@ -26,7 +26,6 @@ def compare_models():
 
     try:
         model_baseline = baseline_a.load()
-        model_pinn = pinn.load()
         model_lstm = physics_lstm.load()
     except Exception as exc:
         raise HTTPException(
@@ -34,24 +33,19 @@ def compare_models():
             detail=f"Failed to load models: {exc}. Please make sure they are trained."
         )
 
-    # 1. Evaluate baseline_a and pinn
+    # 1. Evaluate baseline_a
     y_test_flat = y_test.ravel()
     preds_baseline = baseline_a.predict(model_baseline, X_test)
-    preds_pinn = pinn.predict(model_pinn, X_test)
 
     mae_baseline = mae(y_test_flat, preds_baseline)
     rmse_baseline = rmse(y_test_flat, preds_baseline)
 
-    mae_pinn = mae(y_test_flat, preds_pinn)
-    rmse_pinn = rmse(y_test_flat, preds_pinn)
-
-    # 2. Physics violations for baseline_a and pinn
+    # 2. Physics violations for baseline_a
     cycle_col_idx = FEATURE_COLS.index("cycle")
     condition = X_test[:, [i for i in range(X_test.shape[1]) if i != cycle_col_idx]]
     _, group_ids = np.unique(condition, axis=0, return_inverse=True)
 
     violations_baseline = {"count": 0, "magnitude": 0.0}
-    violations_pinn = {"count": 0, "magnitude": 0.0}
 
     # Sort test set chronologically per group to compute physics violations
     order = np.lexsort((X_test[:, cycle_col_idx], group_ids))
@@ -61,7 +55,6 @@ def compare_models():
 
     # Predict on sorted test set for violations calculation
     preds_baseline_sorted = baseline_a.predict(model_baseline, X_test_sorted)
-    preds_pinn_sorted = pinn.predict(model_pinn, X_test_sorted)
 
     for g in np.unique(group_ids):
         mask = (group_sorted == g)
@@ -69,10 +62,6 @@ def compare_models():
         v_count_b, v_mag_b, _ = physics_metrics(preds_baseline_sorted[mask])
         violations_baseline["count"] += v_count_b
         violations_baseline["magnitude"] += v_mag_b
-
-        v_count_p, v_mag_p, _ = physics_metrics(preds_pinn_sorted[mask])
-        violations_pinn["count"] += v_count_p
-        violations_pinn["magnitude"] += v_mag_p
 
     # 3. Evaluate physics_lstm (which requires sequences)
     preds_lstm_list = []
@@ -116,12 +105,6 @@ def compare_models():
             "rmse": rmse_baseline,
             "physics_violation_count": violations_baseline["count"],
             "physics_violation_magnitude": violations_baseline["magnitude"],
-        },
-        "pinn": {
-            "mae": mae_pinn,
-            "rmse": rmse_pinn,
-            "physics_violation_count": violations_pinn["count"],
-            "physics_violation_magnitude": violations_pinn["magnitude"],
         },
         "physics_lstm": {
             "mae": mae_lstm,
