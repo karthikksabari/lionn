@@ -1,5 +1,17 @@
+// src/types.ts
+
+export interface Profile {
+  id: string;
+  label: string;
+  c_rate: number;
+  ambient_temp_C: number;
+  max_cycles: number;
+  split?: 'train' | 'test' | 'held_out';
+}
+
 export interface PredictRequest {
-  battery_id: string;
+  battery_id?: string;
+  profile_id?: string;
   c_rate: number;
   ambient_temp_C: number;
   cycle_range: [number, number];
@@ -29,6 +41,7 @@ export interface RulPrediction {
 export interface PredictResponse {
   cycles: number[];
   ground_truth: (number | null)[];
+  ground_truth_type?: 'measured' | 'simulated';
   capacity_baseline_mlp: number[];
   capacity_pinn: number[];
   metrics: Metrics;

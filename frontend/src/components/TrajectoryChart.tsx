@@ -15,6 +15,7 @@ import { Activity } from 'lucide-react';
 interface TrajectoryChartProps {
   cycles: number[];
   groundTruth: (number | null)[];
+  groundTruthType?: 'measured' | 'simulated' | string;
   capacityBaselineMlp: number[];
   capacityPinn: number[];
 }

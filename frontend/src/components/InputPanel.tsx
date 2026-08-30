@@ -1,6 +1,7 @@
 // src/components/InputPanel.tsx
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { PredictRequest } from '../types';
+import { PredictRequest, Profile } from '../types';
+import { getProfiles } from '../api/predict';
 import { ArrowRight, ChevronDown, Check, Gauge, Activity, Infinity as InfinityIcon } from 'lucide-react';
 
 interface InputPanelProps {
@@ -9,37 +10,14 @@ interface InputPanelProps {
   initialRequest?: PredictRequest;
 }
 
-const PRESET_SCENARIOS = [
-  {
-    id: 'battery_unseen_fast_charge_profile_A',
-    name: 'Unseen Fast-Charge Profile A (3.5C)',
-    c_rate: 3.5,
-    temp: 45.0,
-    cycles: 1000,
-  },
-  {
-    id: 'battery_unseen_fast_charge_profile_B',
-    name: 'Unseen Fast-Charge Profile B (4.2C)',
-    c_rate: 4.2,
-    temp: 50.0,
-    cycles: 1000,
-  },
-  {
-    id: 'battery_cold_temperature_stress',
-    name: 'Cold Weather Accelerated Degradation (-5°C)',
-    c_rate: 2.0,
-    temp: -5.0,
-    cycles: 800,
-  }
-];
-
 export const InputPanel: React.FC<InputPanelProps> = ({
   onRunPrediction,
   isLoading,
   initialRequest,
 }) => {
-  const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(
-    initialRequest?.battery_id || PRESET_SCENARIOS[0].id
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(
+    initialRequest?.profile_id ?? initialRequest?.battery_id ?? null
   );
   const [cRate, setCRate] = useState<number>(initialRequest?.c_rate ?? 3.5);
   const [ambientTemp, setAmbientTemp] = useState<number>(initialRequest?.ambient_temp_C ?? 45.0);
@@ -48,6 +26,26 @@ export const InputPanel: React.FC<InputPanelProps> = ({
   const [isPresetOpen, setIsPresetOpen] = useState<boolean>(false);
   const [activeSlider, setActiveSlider] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    getProfiles().then((data) => {
+      if (isMounted) {
+        setProfiles(data);
+        if (!selectedProfileId && data.length > 0 && !initialRequest?.profile_id && !initialRequest?.battery_id) {
+          const defaultProfile = data.find((p) => p.split === 'test') || data[0];
+          setSelectedProfileId(defaultProfile.id);
+          setCRate(defaultProfile.c_rate);
+          setAmbientTemp(defaultProfile.ambient_temp_C);
+          setCycleHorizon(defaultProfile.max_cycles);
+        }
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -59,33 +57,38 @@ export const InputPanel: React.FC<InputPanelProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleSelectPreset = (preset: typeof PRESET_SCENARIOS[0]) => {
-    setSelectedScenarioId(preset.id);
+  const handleSelectProfile = (preset: Profile) => {
+    setSelectedProfileId(preset.id);
     setCRate(preset.c_rate);
-    setAmbientTemp(preset.temp);
-    setCycleHorizon(preset.cycles);
+    setAmbientTemp(preset.ambient_temp_C);
+    setCycleHorizon(preset.max_cycles);
+    setIsPresetOpen(false);
+  };
+
+  const handleSelectCustom = () => {
+    setSelectedProfileId(null);
     setIsPresetOpen(false);
   };
 
   const handleManualCRateChange = (val: number) => {
-    setSelectedScenarioId(null);
+    setSelectedProfileId(null);
     setCRate(val);
   };
 
   const handleManualTempChange = (val: number) => {
-    setSelectedScenarioId(null);
+    setSelectedProfileId(null);
     setAmbientTemp(val);
   };
 
   const handleManualCycleChange = (val: number) => {
-    setSelectedScenarioId(null);
+    setSelectedProfileId(null);
     setCycleHorizon(val);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onRunPrediction({
-      battery_id: selectedScenarioId || 'custom_user_scenario',
+      ...(selectedProfileId ? { profile_id: selectedProfileId, battery_id: selectedProfileId } : {}),
       c_rate: Number(cRate),
       ambient_temp_C: Number(ambientTemp),
       cycle_range: [0, Number(cycleHorizon)],
@@ -148,22 +151,21 @@ export const InputPanel: React.FC<InputPanelProps> = ({
   const tempPercent = Math.min(100, Math.max(0, ((ambientTemp - (-20)) / (65 - (-20))) * 100));
   const cyclePercent = Math.min(100, Math.max(0, ((cycleHorizon - 100) / (2000 - 100)) * 100));
 
-  // 1. FIX "Preset: undefined" BUG by checking whether a valid preset actually matches
-  const activePresetObj = PRESET_SCENARIOS.find((s) => s.id === selectedScenarioId);
-  const modeLabel = activePresetObj 
-    ? `Preset: ${activePresetObj.name.split('(')[0].trim()}` 
+  const activeProfile = profiles.find((p) => p.id === selectedProfileId);
+  const modeLabel = activeProfile
+    ? `Preset: ${activeProfile.label.split('(')[0].trim()}`
     : 'User (Custom)';
 
   return (
     <form onSubmit={handleSubmit} className="w-full max-w-7xl mx-auto h-[78vh] max-h-[820px] flex flex-col justify-center">
       
-      {/* Side-by-Side 2-Column Grid */}
+      {/* 2-Column Side-by-Side Layout */}
       <div className="w-full h-full flex flex-row items-stretch gap-6">
         
         {/* ================= LEFT COLUMN (~40% Width) ================= */}
         <div className="w-[40%] h-full rounded-[32px] bg-slate-900/[0.04] backdrop-blur-[24px] border border-white/70 p-6 flex flex-col justify-between shadow-[0_16px_40px_rgba(2,132,199,0.06)] overflow-hidden">
           
-          {/* Header Row: Mode Label & Preset Dropdown */}
+          {/* Mode Header & Dynamic Profiles Dropdown */}
           <div className="flex items-center justify-between gap-3 shrink-0">
             <div className="flex flex-col">
               <span className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-slate-400">
@@ -179,7 +181,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                 type="button"
                 onClick={() => setIsPresetOpen(!isPresetOpen)}
                 className={`h-[38px] px-4 rounded-full border text-xs font-['Space_Grotesk'] font-bold tracking-wider uppercase transition-all flex items-center gap-1.5 shadow-sm ${
-                  activePresetObj
+                  activeProfile
                     ? 'bg-[#0284c7] text-white border-[#0284c7] shadow-[0_4px_12px_rgba(2,132,199,0.25)]'
                     : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'
                 }`}
@@ -189,47 +191,68 @@ export const InputPanel: React.FC<InputPanelProps> = ({
               </button>
 
               {isPresetOpen && (
-                <div className="absolute top-11 right-0 z-50 w-72 rounded-2xl bg-white/95 backdrop-blur-xl border border-slate-200 p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.12)] space-y-1 animate-fadeIn">
-                  {PRESET_SCENARIOS.map((preset) => (
+                <div className="absolute top-11 right-0 z-50 w-80 rounded-2xl bg-white/95 backdrop-blur-xl border border-slate-200 p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.12)] space-y-1 animate-fadeIn max-h-[340px] overflow-y-auto">
+                  {profiles.map((profile) => {
+                    const isHeldOut = profile.split === 'test' || profile.split === 'held_out';
+                    return (
+                      <button
+                        key={profile.id}
+                        type="button"
+                        onClick={() => handleSelectProfile(profile)}
+                        className={`w-full text-left px-3 py-2 rounded-xl text-xs font-['Space_Grotesk'] font-semibold transition-colors flex items-center justify-between gap-2 ${
+                          selectedProfileId === profile.id
+                            ? 'bg-blue-50 text-[#0284c7]'
+                            : 'text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <span className="truncate">{profile.label}</span>
+                          {isHeldOut && (
+                            <span className="px-1.5 py-0.5 rounded bg-sky-100 text-[#0284c7] text-[9px] font-mono font-bold tracking-wide uppercase shrink-0">
+                              OOD Test
+                            </span>
+                          )}
+                        </div>
+                        {selectedProfileId === profile.id && <Check className="w-3.5 h-3.5 shrink-0 text-[#0284c7]" />}
+                      </button>
+                    );
+                  })}
+
+                  <div className="border-t border-slate-100 pt-1 mt-1">
                     <button
-                      key={preset.id}
                       type="button"
-                      onClick={() => handleSelectPreset(preset)}
+                      onClick={handleSelectCustom}
                       className={`w-full text-left px-3 py-2 rounded-xl text-xs font-['Space_Grotesk'] font-semibold transition-colors flex items-center justify-between ${
-                        selectedScenarioId === preset.id
+                        selectedProfileId === null
                           ? 'bg-blue-50 text-[#0284c7]'
                           : 'text-slate-700 hover:bg-slate-100'
                       }`}
                     >
-                      <span className="truncate pr-2">{preset.name}</span>
-                      {selectedScenarioId === preset.id && <Check className="w-3.5 h-3.5 shrink-0 text-[#0284c7]" />}
+                      <span>Custom Scenario (Manual)</span>
+                      {selectedProfileId === null && <Check className="w-3.5 h-3.5 shrink-0 text-[#0284c7]" />}
                     </button>
-                  ))}
+                  </div>
                 </div>
               )}
             </div>
           </div>
 
-          {/* 2 & 3. Reduced Inner White Battery Card (~22% smaller height, balanced vertical margins) */}
+          {/* Locked Battery Card Dimensions */}
           <div className="relative my-auto w-full max-w-[390px] mx-auto h-[78%] max-h-[640px] rounded-[24px] bg-white border border-slate-200/70 p-4 flex flex-col items-center justify-center shadow-[0_8px_24px_rgba(0,0,0,0.02)] overflow-hidden">
             
-            {/* Dynamic Temperature Glow */}
             <div
               className="absolute w-[170px] h-[240px] rounded-full pointer-events-none transition-all duration-700 ease-out"
               style={tempGlowStyle}
             />
 
-            {/* Frost Overlay */}
             {isFreezing && (
               <div className="absolute inset-0 pointer-events-none bg-gradient-to-b from-cyan-200/25 via-blue-100/10 to-transparent border-t-2 border-cyan-300" />
             )}
 
-            {/* Heat Shimmer */}
             {isOverheating && (
               <div className="absolute inset-0 pointer-events-none bg-gradient-to-t from-red-500/10 via-orange-400/5 to-transparent animate-pulse" />
             )}
 
-            {/* Proportionally Scaled Battery body */}
             <div className="relative z-10 w-[125px] sm:w-[138px] h-[230px] sm:h-[255px] flex flex-col items-center">
               <div className="w-11 h-3.5 rounded-t-md bg-slate-300 border-2 border-b-0 border-slate-400/80" />
 
@@ -259,7 +282,6 @@ export const InputPanel: React.FC<InputPanelProps> = ({
 
           </div>
 
-          {/* 3. Dedicated Target Cycles Readout occupying bottom of the left column */}
           <div className="pt-2 text-center shrink-0">
             <span className="font-mono text-xs font-semibold text-slate-500 tracking-wider">
               Target: <strong className="text-slate-800">{cycleHorizon} cycles</strong>
@@ -271,12 +293,10 @@ export const InputPanel: React.FC<InputPanelProps> = ({
         {/* ================= RIGHT COLUMN (~60% Width) ================= */}
         <div className="w-[60%] h-full rounded-[32px] bg-slate-900/[0.04] backdrop-blur-[24px] border border-white/70 p-6 sm:p-8 flex flex-col justify-between shadow-[0_16px_40px_rgba(2,132,199,0.06)]">
           
-          {/* 4. Enlarged Three Input Rows with increased vertical gaps (130-140px height) */}
           <div className="flex-1 flex flex-col justify-center gap-5">
             
             {/* ROW 1: Ambient Temperature */}
             <div className="h-[135px] rounded-[36px] bg-white border border-slate-200/90 px-8 py-5 flex items-center justify-between gap-6 shadow-[0_4px_16px_rgba(0,0,0,0.02)]">
-              {/* 5. Distinctive Semicircular Gauge Dial Icon */}
               <div className="flex items-center gap-3.5 w-48 sm:w-56 shrink-0">
                 <div className="w-11 h-11 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center text-[#0284c7] shrink-0 shadow-sm">
                   <Gauge className="w-5 h-5 stroke-[2]" />
@@ -328,7 +348,6 @@ export const InputPanel: React.FC<InputPanelProps> = ({
 
             {/* ROW 2: Charge Rate (C-Rate) */}
             <div className="h-[135px] rounded-[36px] bg-white border border-slate-200/90 px-8 py-5 flex items-center justify-between gap-6 shadow-[0_4px_16px_rgba(0,0,0,0.02)]">
-              {/* 5. Distinctive Pulse / Waveform Icon */}
               <div className="flex items-center gap-3.5 w-48 sm:w-56 shrink-0">
                 <div className="w-11 h-11 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center text-[#0284c7] shrink-0 shadow-sm">
                   <Activity className="w-5 h-5 stroke-[2]" />
@@ -380,7 +399,6 @@ export const InputPanel: React.FC<InputPanelProps> = ({
 
             {/* ROW 3: Degradation Horizon Target */}
             <div className="h-[135px] rounded-[36px] bg-white border border-slate-200/90 px-8 py-5 flex items-center justify-between gap-6 shadow-[0_4px_16px_rgba(0,0,0,0.02)]">
-              {/* 5. Distinctive Infinity Loop Icon */}
               <div className="flex items-center gap-3.5 w-48 sm:w-56 shrink-0">
                 <div className="w-11 h-11 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center text-[#0284c7] shrink-0 shadow-sm">
                   <InfinityIcon className="w-5 h-5 stroke-[2]" />
@@ -432,7 +450,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
 
           </div>
 
-          {/* Full-Width Stadium Run Diagnostics Button */}
+          {/* Run Diagnostics Button */}
           <div className="w-full pt-4">
             <button
               type="submit"

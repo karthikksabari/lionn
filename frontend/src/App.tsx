@@ -166,7 +166,6 @@ export const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const [lastRequest, setLastRequest] = useState<PredictRequest>({
-    battery_id: 'battery_unseen_fast_charge_profile_A',
     c_rate: 3.5,
     ambient_temp_C: 45.0,
     cycle_range: [0, 1000],
@@ -196,7 +195,7 @@ export const App: React.FC = () => {
     setScreen('input');
   };
 
-  // SOH & RUL calculations for Diagnostic Summary
+  // SOH calculations
   const ratedCapacity = predictionData?.capacity_pinn?.[0] ?? 1.1;
   const finalPredictedCapacity = predictionData?.capacity_pinn
     ? predictionData.capacity_pinn[predictionData.capacity_pinn.length - 1]
@@ -206,7 +205,17 @@ export const App: React.FC = () => {
     Math.max(0, (finalPredictedCapacity / ratedCapacity) * 100)
   );
   const isSafeOperating = currentSohPercent >= 80.0;
-  const pinnRulCycles = predictionData?.rul?.pinn_cycles ?? (predictionData?.rul as any)?.rul_pinn ?? 920;
+
+  // Resilient RUL extraction
+  const pinnRulCycles =
+    predictionData?.rul?.rul_pinn ??
+    (predictionData?.rul as any)?.pinn_cycles ??
+    920;
+
+  const isCustomScenario = !lastRequest.profile_id && (!lastRequest.battery_id || lastRequest.battery_id === 'custom_user_scenario');
+  const regimeDisplayName = isCustomScenario
+    ? 'Custom User Scenario'
+    : (lastRequest.profile_id ?? lastRequest.battery_id ?? 'Selected Scenario').replace(/_/g, ' ');
 
   return (
     <div className="min-h-screen font-sans selection:bg-blue-500/30 selection:text-blue-900 bg-white text-slate-800">
@@ -381,14 +390,13 @@ export const App: React.FC = () => {
         {screen === 'results' && predictionData && (
           <div className="relative min-h-screen w-full overflow-x-hidden">
             
-            {/* LAYER A: Fixed Background Layer (Light-to-Blue Gradient) */}
+            {/* LAYER A: Fixed Background Layer */}
             <div 
               className="fixed inset-0 pointer-events-none z-0 overflow-hidden"
               style={{
                 background: 'linear-gradient(to top, #0284c7 0%, rgba(2, 132, 199, 0.75) 15%, rgba(2, 132, 199, 0.35) 35%, rgba(255, 255, 255, 0.95) 65%, #ffffff 100%)'
               }}
             >
-              {/* Preserved Light Lion Artwork */}
               <div className="absolute top-[-15px] left-[-15px]">
                 <img
                   src="/lion-profile.png"
@@ -400,7 +408,6 @@ export const App: React.FC = () => {
                 />
               </div>
 
-              {/* Light Theme Scattered Background Elements */}
               <ScatteredBackgroundElements theme="light" />
             </div>
 
@@ -420,7 +427,7 @@ export const App: React.FC = () => {
                 <div className="flex flex-wrap items-center gap-3 font-mono text-xs">
                   <span className="px-3.5 py-2 rounded-2xl bg-[#0284c7]/15 backdrop-blur-md border border-[#0284c7]/25 text-slate-800 shadow-[0_4px_12px_rgba(2,132,199,0.06)]">
                     <span className="tracking-[0.1em] text-slate-500 uppercase">Regime:</span>{' '}
-                    <strong className="text-slate-900">{lastRequest.battery_id.replace(/_/g, ' ')}</strong>
+                    <strong className="text-slate-900">{regimeDisplayName}</strong>
                   </span>
                   <span className="px-3.5 py-2 rounded-2xl bg-[#0284c7]/15 backdrop-blur-md border border-[#0284c7]/25 text-slate-800 shadow-[0_4px_12px_rgba(2,132,199,0.06)]">
                     <span className="tracking-[0.1em] text-slate-500 uppercase">C-Rate:</span>{' '}
@@ -437,13 +444,12 @@ export const App: React.FC = () => {
                 </div>
               </div>
 
-              {/* ================= MINIMALIST DIAGNOSTIC SUMMARY SECTION ================= */}
+              {/* Minimalist Diagnostic Summary Section */}
               <div className="rounded-[32px] bg-slate-900/[0.04] backdrop-blur-[24px] border border-white/80 p-8 sm:p-10 shadow-[0_24px_50px_rgba(2,132,199,0.08)] space-y-7">
                 
-                {/* 3 Minimal Stat Cards: No Icons, No Badges, No Subtitle Captions */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
                   
-                  {/* Card 1: Predicted State of Health */}
+                  {/* Card 1: Predicted SOH */}
                   <div className="py-8 px-7 rounded-[24px] bg-white/75 backdrop-blur-xl border border-white/90 shadow-[0_6px_20px_rgba(2,132,199,0.04)] flex flex-col justify-between space-y-4">
                     <span className="text-xs font-mono font-bold uppercase tracking-[0.14em] text-slate-500">
                       PREDICTED STATE OF HEALTH
@@ -464,7 +470,7 @@ export const App: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Card 3: Safety Verdict (Conveyed Solely Through Semantic Color) */}
+                  {/* Card 3: Safety Verdict */}
                   <div className={`py-8 px-7 rounded-[24px] backdrop-blur-xl border shadow-[0_6px_20px_rgba(0,0,0,0.02)] flex flex-col justify-between space-y-4 ${
                     isSafeOperating
                       ? 'bg-emerald-50/60 border-emerald-200/80'
@@ -484,9 +490,23 @@ export const App: React.FC = () => {
 
                 </div>
 
-                {/* Preserved Supporting Context Subtitle */}
+                {/* Supporting Context Subtitle */}
                 <p className="text-xs sm:text-sm text-slate-600 font-sans leading-relaxed pt-3 border-t border-slate-200/60">
-                  Prediction for <strong className="text-slate-900">{lastRequest.battery_id.replace(/_/g, ' ')}</strong> at <strong className="text-slate-900">{lastRequest.c_rate.toFixed(1)}C</strong> / <strong className="text-slate-900">{lastRequest.ambient_temp_C.toFixed(0)}°C</strong> over <strong className="text-slate-900">{lastRequest.cycle_range[1]} cycles</strong>, validated against ground truth and baseline MLP below.
+                  {isCustomScenario ? (
+                    <>
+                      Prediction for <strong className="text-slate-900">custom scenario</strong> at{' '}
+                      <strong className="text-slate-900">{lastRequest.c_rate.toFixed(1)}C</strong> /{' '}
+                      <strong className="text-slate-900">{lastRequest.ambient_temp_C.toFixed(0)}°C</strong> over{' '}
+                      <strong className="text-slate-900">{lastRequest.cycle_range[1]} cycles</strong>, compared against a physics-simulated reference (no recorded data exists for this exact configuration).
+                    </>
+                  ) : (
+                    <>
+                      Prediction for <strong className="text-slate-900">{regimeDisplayName}</strong> at{' '}
+                      <strong className="text-slate-900">{lastRequest.c_rate.toFixed(1)}C</strong> /{' '}
+                      <strong className="text-slate-900">{lastRequest.ambient_temp_C.toFixed(0)}°C</strong> over{' '}
+                      <strong className="text-slate-900">{lastRequest.cycle_range[1]} cycles</strong>, validated against recorded ground truth and baseline MLP below.
+                    </>
+                  )}
                 </p>
 
               </div>
@@ -496,6 +516,7 @@ export const App: React.FC = () => {
                 <TrajectoryChart
                   cycles={predictionData.cycles}
                   groundTruth={predictionData.ground_truth}
+                  groundTruthType={predictionData.ground_truth_type}
                   capacityBaselineMlp={predictionData.capacity_baseline_mlp}
                   capacityPinn={predictionData.capacity_pinn}
                 />
@@ -515,15 +536,11 @@ export const App: React.FC = () => {
               {/* Physics Loss Trace Card */}
               <div className="rounded-[32px] bg-slate-900/[0.04] backdrop-blur-[24px] border border-white/80 p-6 sm:p-8 lg:p-10 shadow-[0_20px_50px_rgba(2,132,199,0.06)]">
                 <PhysicsLossPanel
-                  physicsLossTrace={
-                    predictionData?.physics_loss_trace ??
-                    (predictionData as any)?.loss_trace ??
-                    []
-                  }
+                  physicsLossTrace={predictionData.physics_loss_trace}
                 />
               </div>
 
-              {/* Bottom Scenario Reset Action */}
+              {/* Scenario Reset Action Button */}
               <div className="pt-4 flex justify-center">
                 <button
                   onClick={handleReturnToInput}
