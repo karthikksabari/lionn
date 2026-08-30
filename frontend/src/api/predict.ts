@@ -1,16 +1,30 @@
 import { PredictRequest, PredictResponse } from '../types';
 import sampleResponse from '../mock/sampleResponse.json';
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+
+// ---- Shape of the REAL backend's response (backend/api/app.py) ----
+interface BackendPredictResponse {
+  cycles: number[];
+  real: number[];
+  baseline_a: number[];
+  pinn: number[];
+  metrics: {
+    baseline_a: { mae: number; rmse: number };
+    pinn: { mae: number; rmse: number };
+  };
+  violations: Record<string, number>;
+}
+
 /**
  * Simulates battery degradation dynamics under physics-informed vs unconstrained MLP models.
- * Calculates dynamic metrics, capacity trajectories, and physics violations based on C-rate,
- * ambient temperature, and cycle range.
+ * Used as a fallback if the real backend is unreachable or errors, so the demo never breaks.
  */
 function generateDynamicPrediction(request: PredictRequest): PredictResponse {
   const [startCycle, endCycle] = request.cycle_range;
   const numPoints = 25;
   const step = Math.max(1, Math.floor((endCycle - startCycle) / (numPoints - 1)));
-  
+
   const cycles: number[] = [];
   for (let c = startCycle; c <= endCycle; c += step) {
     cycles.push(c);
@@ -19,14 +33,11 @@ function generateDynamicPrediction(request: PredictRequest): PredictResponse {
     cycles.push(endCycle);
   }
 
-  // Nominal initial capacity in Ah
   const nominalCapacity = 1.10;
-  // End of Life (EOL) capacity threshold (typically 80% or 70% of nominal)
-  const eolThreshold = nominalCapacity * 0.727; // ~0.80 Ah
+  const eolThreshold = nominalCapacity * 0.727;
 
-  // Arrhenius & C-rate acceleration factor
   const tempKelvin = request.ambient_temp_C + 273.15;
-  const baseTempKelvin = 298.15; // 25°C
+  const baseTempKelvin = 298.15;
   const arrheniusFactor = Math.exp((5000 / 8.314) * (1 / baseTempKelvin - 1 / tempKelvin));
   const cRateMultiplier = Math.pow(request.c_rate / 1.0, 1.15);
   const degradationRate = 0.00032 * arrheniusFactor * cRateMultiplier;
@@ -35,7 +46,6 @@ function generateDynamicPrediction(request: PredictRequest): PredictResponse {
   const capacityPinn: number[] = [];
   const capacityBaselineMlp: number[] = [];
 
-  // Ground truth is known up to ~75% of the operational lifespan
   const knownCutoffCycle = startCycle + (endCycle - startCycle) * 0.72;
 
   let mlpViolations = 0;
@@ -43,33 +53,25 @@ function generateDynamicPrediction(request: PredictRequest): PredictResponse {
 
   for (let i = 0; i < cycles.length; i++) {
     const cycle = cycles[i];
-    
-    // Exact physical curve with SEI growth (sqrt(t)) and transition to non-linear knee point
+
     const linearWear = degradationRate * cycle;
     const nonLinearKnee = Math.pow(Math.max(0, cycle - 550) / 400, 2.4) * 0.12;
     const trueCap = Math.max(0.05, nominalCapacity - linearWear - nonLinearKnee);
 
-    // Ground truth (null after cutoff to simulate forecasting horizon)
     if (cycle <= knownCutoffCycle) {
-      // Add slight experimental sensor noise (+/- 0.002 Ah)
       const noise = Math.sin(cycle * 0.08) * 0.0015;
       groundTruth.push(Number((trueCap + noise).toFixed(4)));
     } else {
       groundTruth.push(null);
     }
 
-    // PINN Model: Preserves monotonicity dQ/dt <= 0 and respects electrochemical boundaries
     const pinnCap = Number((trueCap + Math.sin(cycle * 0.03) * 0.0008).toFixed(4));
     capacityPinn.push(pinnCap);
 
-    // Baseline MLP Model: Overfits training region, exhibits unphysical oscillations/rebounds
-    // or drastic exponential collapse on out-of-distribution conditions
     let mlpCap = trueCap;
     if (cycle <= knownCutoffCycle) {
-      // High frequency training wobble
       mlpCap += Math.sin(cycle * 0.15) * 0.012 - (cycle / endCycle) * 0.008;
     } else {
-      // Extrapolation divergence: artificial capacity recovery (physics violation) or sudden crash
       const outOfDistFactor = (cycle - knownCutoffCycle) / (endCycle - knownCutoffCycle);
       const unphysicalRebound = Math.sin(outOfDistFactor * Math.PI * 2.5) * 0.045;
       const extrapolationDrift = -Math.pow(outOfDistFactor, 1.8) * 0.18;
@@ -79,14 +81,31 @@ function generateDynamicPrediction(request: PredictRequest): PredictResponse {
     const mlpValFixed = Number(Math.max(0.05, mlpCap).toFixed(4));
     capacityBaselineMlp.push(mlpValFixed);
 
-    // Detect non-monotonicity (capacity increasing with cycle number = violation)
     if (i > 0 && mlpValFixed > prevMlpVal + 0.001) {
       mlpViolations += (mlpValFixed - prevMlpVal);
     }
     prevMlpVal = mlpValFixed;
   }
 
-  // Calculate error metrics only over the known ground truth points
+  return buildResponseFromSeries(cycles, groundTruth, capacityBaselineMlp, capacityPinn, {
+    fixedPviMlp: Number((mlpViolations * 2.5 + (request.c_rate > 2 ? 0.08 : 0.03)).toFixed(3)),
+    fixedTrueRul: 785,
+    eolThreshold,
+  });
+}
+
+/**
+ * Shared metric computation: RMSE, MAPE, Physics Violation Index (%), and RUL,
+ * computed client-side from three aligned series so displayed numbers are always
+ * internally consistent, regardless of which source (real backend or fallback) produced them.
+ */
+function buildResponseFromSeries(
+  cycles: number[],
+  groundTruth: (number | null)[],
+  capacityBaselineMlp: number[],
+  capacityPinn: number[],
+  opts: { fixedPviMlp?: number; fixedTrueRul?: number; eolThreshold?: number } = {}
+): PredictResponse {
   const validIndices = groundTruth
     .map((val, idx) => (val !== null ? idx : -1))
     .filter((idx) => idx !== -1);
@@ -104,8 +123,10 @@ function generateDynamicPrediction(request: PredictRequest): PredictResponse {
     sumSqErrMlp += Math.pow(predMlp - actual, 2);
     sumSqErrPinn += Math.pow(predPinn - actual, 2);
 
-    sumAbsPctErrMlp += Math.abs((predMlp - actual) / actual);
-    sumAbsPctErrPinn += Math.abs((predPinn - actual) / actual);
+    if (actual !== 0) {
+      sumAbsPctErrMlp += Math.abs((predMlp - actual) / actual);
+      sumAbsPctErrPinn += Math.abs((predPinn - actual) / actual);
+    }
   }
 
   const n = validIndices.length || 1;
@@ -114,23 +135,30 @@ function generateDynamicPrediction(request: PredictRequest): PredictResponse {
   const mapeBaselineMlp = Number(((sumAbsPctErrMlp / n) * 100).toFixed(2));
   const mapePinn = Number(((sumAbsPctErrPinn / n) * 100).toFixed(2));
 
-  // Physics violation index
-  const pviMlp = Number((mlpViolations * 2.5 + (request.c_rate > 2 ? 0.08 : 0.03)).toFixed(3));
-  const pviPinn = 0.0;
+  // Physics Violation Index: % of steps where capacity increases (non-monotonic)
+  const computePvi = (series: number[]): number => {
+    let violations = 0;
+    for (let i = 1; i < series.length; i++) {
+      if (series[i] > series[i - 1] + 0.001) violations++;
+    }
+    return Number(((violations / Math.max(1, series.length - 1)) * 100).toFixed(2));
+  };
 
-  // Remaining Useful Life calculation (cycle count when reaching EOL threshold)
+  const pviMlp = opts.fixedPviMlp ?? computePvi(capacityBaselineMlp);
+  const pviPinn = computePvi(capacityPinn);
+
+  const nominalCapacity = capacityPinn[0] ?? capacityBaselineMlp[0] ?? 1.0;
+  const eolThreshold = opts.eolThreshold ?? nominalCapacity * 0.8;
+
   const findRulCycle = (series: number[]): number => {
     for (let i = 0; i < series.length; i++) {
-      if (series[i] <= eolThreshold) {
-        return cycles[i];
-      }
+      if (series[i] <= eolThreshold) return cycles[i];
     }
     return cycles[cycles.length - 1] + 120;
   };
 
-  const trueRulCycle = 785;
-  const pinnRulCycle = findRulCycle(capacityPinn);
-  const mlpRulCycle = findRulCycle(capacityBaselineMlp);
+  const trueSeries = groundTruth.filter((v): v is number => v !== null);
+  const trueRulCycle = opts.fixedTrueRul ?? (trueSeries.length ? findRulCycle(groundTruth.map((v) => v ?? Infinity)) : cycles[cycles.length - 1]);
 
   return {
     cycles,
@@ -145,28 +173,67 @@ function generateDynamicPrediction(request: PredictRequest): PredictResponse {
       physics_violation_index_baseline_mlp: pviMlp,
       physics_violation_index_pinn: pviPinn,
     },
+    // The real backend doesn't currently expose a training loss trace — keep using
+    // the sample trace here as a known, explainable gap rather than blocking the demo.
     physics_loss_trace: sampleResponse.physics_loss_trace,
     rul: {
-      rul_baseline_mlp: mlpRulCycle,
-      rul_pinn: pinnRulCycle,
+      rul_baseline_mlp: findRulCycle(capacityBaselineMlp),
+      rul_pinn: findRulCycle(capacityPinn),
       rul_ground_truth: trueRulCycle,
     },
   };
 }
 
 /**
- * Executes battery degradation prediction.
- * Includes a mandatory artificial ~500ms latency to showcase loading feedback.
+ * Calls the real backend, translating between the app's contract and the
+ * backend's actual field names (profile_id/temperature/n_cycles -> battery_id/
+ * ambient_temp_C/cycle_range, and real/baseline_a/pinn -> ground_truth/
+ * capacity_baseline_mlp/capacity_pinn).
+ */
+async function fetchRealPrediction(request: PredictRequest): Promise<PredictResponse> {
+  const [, endCycle] = request.cycle_range;
+
+  const response = await fetch(`${API_BASE_URL}/predict`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+  profile_id: request.battery_id,
+  c_rate: Math.min(5.0, Math.max(0.1, request.c_rate)),
+  temperature: Math.min(60.0, Math.max(-20.0, request.ambient_temp_C)),
+  n_cycles: Math.min(500, Math.max(10, endCycle)),
+}),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Backend responded with ${response.status}`);
+  }
+
+  const data: BackendPredictResponse = await response.json();
+
+  return buildResponseFromSeries(
+    data.cycles,
+    data.real,
+    data.baseline_a,
+    data.pinn
+  );
+}
+
+/**
+ * Executes battery degradation prediction against the real backend.
+ * Falls back to the local simulation if the backend is unreachable or errors,
+ * so the demo never breaks even if the server hiccups.
  */
 export async function predictBatteryHealth(request: PredictRequest): Promise<PredictResponse> {
-  // Simulate network & PINN inference execution delay (500ms)
-  await new Promise((resolve) => setTimeout(resolve, 520));
-
   try {
-    return generateDynamicPrediction(request);
+    return await fetchRealPrediction(request);
   } catch (err) {
-    console.error('Error generating battery health prediction:', err);
-    // Fallback to static sample response
-    return sampleResponse as PredictResponse;
+    console.warn('Real backend unavailable, using local fallback simulation:', err);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    try {
+      return generateDynamicPrediction(request);
+    } catch (fallbackErr) {
+      console.error('Fallback prediction also failed:', fallbackErr);
+      return sampleResponse as PredictResponse;
+    }
   }
 }
