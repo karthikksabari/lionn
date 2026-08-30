@@ -1,4 +1,4 @@
-"""Train Baseline A and the PINN, then print a comparison table.
+"""Train Baseline A and the Physics-Informed LSTM, then print a comparison table.
 
 Run with: python -m scripts.train
 """
@@ -6,8 +6,11 @@ Run with: python -m scripts.train
 import numpy as np
 
 from backend.data.loader import FEATURE_COLS, load_all_raw, preprocess
-from backend.models import baseline_a, physics_lstm as pinn
-from backend.utils.metrics import MODEL_KEYS, evaluate_all
+from backend.models import baseline_a, physics_lstm
+import backend.utils.metrics as metrics
+
+# Monkeypatch MODEL_KEYS in metrics to support "physics_lstm" instead of "pinn"
+metrics.MODEL_KEYS = ("baseline_a", "physics_lstm")
 
 CYCLE_COL_IDX = FEATURE_COLS.index("cycle")
 
@@ -24,13 +27,13 @@ def main() -> None:
     print("[3/5] training baseline_a")
     baseline_a.train(X_train, y_train)
 
-    print("[4/5] training pinn")
-    pinn.train(X_train, y_train, cycle_col_idx=CYCLE_COL_IDX)
+    print("[4/5] training physics_lstm")
+    physics_lstm.train(X_train, y_train, cycle_col_idx=CYCLE_COL_IDX)
 
     print("[5/5] evaluating on held-out test split")
     models = {
         "baseline_a": (baseline_a, baseline_a.load(X_train.shape[1])),
-        "pinn": (pinn, pinn.load(X_train.shape[1])),
+        "physics_lstm": (physics_lstm, physics_lstm.load(X_train.shape[1])),
     }
 
     # Violation counts compare consecutive cycles of one battery, so evaluate the test
@@ -42,28 +45,27 @@ def main() -> None:
     print(f"      test profiles={len(groups)}")
 
     preds = {key: module.predict(model, X_eval) for key, (module, model) in models.items()}
-    results = evaluate_all(y_eval, preds, groups=group_eval)
+    results = metrics.evaluate_all(y_eval, preds, groups=group_eval)
 
     print()
     print("  Model        MAE      RMSE   Violations")
     print("  -------------------------------------------")
-    for key in MODEL_KEYS:
+    for key in metrics.MODEL_KEYS:
         m = results["metrics"][key]
-        print(f"  {key:<11}{m['mae']:.5f}  {m['rmse']:.5f}  {results['violations'][key]:>10d}")
+        print(f"  {key:<14}  {m['mae']:.5f}  {m['rmse']:.5f}  {results['violations'][key]:>10d}")
     print()
 
 
 if __name__ == "__main__":
     import json
     from pathlib import Path
-    from backend.models import baseline_a, physics_lstm as pinn
 
     baseline_a_losses = []
-    pinn_losses = []
+    physics_lstm_losses = []
 
     # Save original training functions
     _orig_baseline_train = baseline_a.train
-    _orig_pinn_train = pinn.train
+    _orig_physics_lstm_train = physics_lstm.train
 
     def wrapped_baseline_train(X_train, y_train):
         import torch
@@ -98,7 +100,7 @@ if __name__ == "__main__":
         print(f"[baseline_a] saved -> {baseline_a.SAVE_PATH}")
         return model
 
-    def wrapped_pinn_train(X_train, y_train, cycle_col_idx=0):
+    def wrapped_physics_lstm_train(X_train, y_train, cycle_col_idx=0):
         import torch
         from torch import nn
         from torch.utils.data import DataLoader, TensorDataset
@@ -116,34 +118,34 @@ if __name__ == "__main__":
         X = torch.as_tensor(np.asarray(X_train_seq, dtype=np.float32))
         y = torch.as_tensor(np.asarray(y_train_seq, dtype=np.float32)).reshape(-1, 1)
 
-        model = pinn.PhysicsLSTM(input_size=X.shape[2])
+        model = physics_lstm.PhysicsLSTM(input_size=X.shape[2])
         criterion = nn.MSELoss()
         optimiser = torch.optim.Adam(model.parameters(), lr=1e-3)
         loader = DataLoader(TensorDataset(X, y), batch_size=64, shuffle=False)
 
         model.train()
-        for epoch in range(1, 101):
+        for epoch in range(1, 301):
             epoch_loss = 0.0
             for xb, yb in loader:
                 optimiser.zero_grad()
                 pred = model(xb)
-                loss = pinn.physics_informed_loss(pred, yb, lambda_weight=0.1)
+                loss = physics_lstm.physics_informed_loss(pred, yb, lambda_weight=0.01)
                 loss.backward()
                 optimiser.step()
                 epoch_loss += loss.item() * xb.shape[0]
             loss_val = float(epoch_loss / len(X))
-            pinn_losses.append(loss_val)
-            if epoch % 20 == 0 or epoch == 1:
-                print(f"[physics_lstm] epoch {epoch:4d}/100  loss={loss_val:.6f}")
+            physics_lstm_losses.append(loss_val)
+            if epoch % 50 == 0 or epoch == 1:
+                print(f"[physics_lstm] epoch {epoch:4d}/300  loss={loss_val:.6f}")
 
-        pinn.SAVED_DIR.mkdir(parents=True, exist_ok=True)
-        torch.save(model.state_dict(), pinn.SAVE_PATH)
-        print(f"[physics_lstm] saved -> {pinn.SAVE_PATH}")
+        physics_lstm.SAVED_DIR.mkdir(parents=True, exist_ok=True)
+        torch.save(model.state_dict(), physics_lstm.SAVE_PATH)
+        print(f"[physics_lstm] saved -> {physics_lstm.SAVE_PATH}")
         return model
 
-    # Patch baseline_a and pinn modules
+    # Patch baseline_a and physics_lstm modules
     baseline_a.train = wrapped_baseline_train
-    pinn.train = wrapped_pinn_train
+    physics_lstm.train = wrapped_physics_lstm_train
 
     # Run the main training of scripts/train.py
     main()
@@ -151,7 +153,7 @@ if __name__ == "__main__":
     # Save the training history
     history_data = {
         "baseline_a": baseline_a_losses,
-        "pinn": pinn_losses,
+        "pinn": physics_lstm_losses,
     }
 
     history_path = Path(__file__).resolve().parents[1] / "backend" / "data" / "processed" / "training_history.json"
