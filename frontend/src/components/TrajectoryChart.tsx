@@ -23,6 +23,7 @@ interface TrajectoryChartProps {
 export const TrajectoryChart: React.FC<TrajectoryChartProps> = ({
   cycles,
   groundTruth,
+  groundTruthType = 'measured',
   capacityBaselineMlp,
   capacityPinn,
 }) => {
@@ -54,6 +55,10 @@ export const TrajectoryChart: React.FC<TrajectoryChartProps> = ({
     }));
   }, [cycles, groundTruth, capacityBaselineMlp, capacityPinn]);
 
+  // Unified dynamic label and styling resolution
+  const isSimulated = groundTruthType === 'simulated';
+  const groundTruthLabel = isSimulated ? 'Simulated Reference' : 'Ground Truth';
+
   return (
     <div className="w-full space-y-8">
       
@@ -70,8 +75,9 @@ export const TrajectoryChart: React.FC<TrajectoryChartProps> = ({
           </h3>
         </div>
 
-        {/* 5. Typography Refinement: Tracked-out Toggle Labels */}
+        {/* Legend Toggle Chips */}
         <div className="flex flex-wrap items-center gap-3 select-none">
+          {/* Dynamic Ground Truth / Simulated Reference Chip */}
           <button
             type="button"
             onClick={() => setShowGroundTruth(!showGroundTruth)}
@@ -81,8 +87,8 @@ export const TrajectoryChart: React.FC<TrajectoryChartProps> = ({
                 : 'bg-transparent text-slate-400 opacity-40 hover:opacity-70'
             }`}
           >
-            <span className="w-2 h-2 rounded-full bg-slate-500" />
-            <span>Ground Truth</span>
+            <span className={`w-2 h-2 rounded-full ${isSimulated ? 'bg-indigo-400' : 'bg-slate-500'}`} />
+            <span>{groundTruthLabel}</span>
           </button>
 
           <button
@@ -114,14 +120,13 @@ export const TrajectoryChart: React.FC<TrajectoryChartProps> = ({
 
       </div>
 
-      {/* Chart Plotting Area: Light Translucent Inner Card */}
+      {/* Chart Plotting Area */}
       <div className="w-full rounded-[24px] bg-white/60 backdrop-blur-xl border border-white/90 p-5 sm:p-7 shadow-[0_8px_24px_rgba(2,132,199,0.04)]">
         <div className="w-full h-[360px] sm:h-[400px]">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData} margin={{ top: 15, right: 15, left: -15, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" vertical={false} />
               
-              {/* 2. Darkened Axis Lines & Tick Labels for Clear Contrast */}
               <XAxis
                 dataKey="cycle"
                 stroke="#475569"
@@ -150,7 +155,6 @@ export const TrajectoryChart: React.FC<TrajectoryChartProps> = ({
                 tickFormatter={(v) => `${v.toFixed(2)} Ah`}
               />
               
-              {/* EOL Reference Line */}
               <ReferenceLine
                 y={0.88}
                 stroke="#ef4444"
@@ -167,7 +171,7 @@ export const TrajectoryChart: React.FC<TrajectoryChartProps> = ({
                 }}
               />
 
-              {/* Synchronized Crosshair Tooltip */}
+              {/* Synchronized Crosshair Tooltip with dynamic series label */}
               <Tooltip
                 cursor={{ stroke: '#0284c7', strokeWidth: 1.2, strokeDasharray: '4 4' }}
                 content={({ active, payload, label }) => {
@@ -193,21 +197,22 @@ export const TrajectoryChart: React.FC<TrajectoryChartProps> = ({
                 }}
               />
 
-              {/* Data Lines */}
+              {/* Line 1: Ground Truth / Simulated Reference */}
               {showGroundTruth && animStage >= 1 && (
                 <Line
                   type="monotone"
                   dataKey="groundTruth"
-                  name="Ground Truth"
-                  stroke="#475569"
-                  strokeWidth={1.75}
+                  name={groundTruthLabel}
+                  stroke={isSimulated ? '#6366f1' : '#475569'}
+                  strokeWidth={isSimulated ? 2 : 1.75}
                   dot={false}
-                  strokeDasharray="3 3"
+                  strokeDasharray={isSimulated ? '6 4' : undefined}
                   animationDuration={750}
                   animationEasing="ease-out"
                 />
               )}
 
+              {/* Line 2: Baseline MLP */}
               {showBaselineMlp && animStage >= 2 && (
                 <Line
                   type="monotone"
@@ -221,6 +226,7 @@ export const TrajectoryChart: React.FC<TrajectoryChartProps> = ({
                 />
               )}
 
+              {/* Line 3: PINN (Physics) */}
               {showPinn && animStage >= 3 && (
                 <Line
                   type="monotone"
@@ -238,15 +244,13 @@ export const TrajectoryChart: React.FC<TrajectoryChartProps> = ({
         </div>
       </div>
 
-      {/* 4. Two Elevated Equation Cards: Custom SVG Sparklines + Oversized Comparison Symbol Watermarks */}
+      {/* Two Minimal Equation Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-1">
         
         {/* CARD 1: Unconstrained Baseline MLP */}
         <div className="relative rounded-[24px] bg-white/70 backdrop-blur-xl border border-white/80 overflow-hidden flex shadow-[0_6px_20px_rgba(0,0,0,0.02)]">
-          {/* Amber Accent Bar */}
           <div className="w-1.5 bg-amber-500 shrink-0" />
           
-          {/* Subtle Oversized Background Comparison Symbol Watermark ">" */}
           <div className="absolute right-3 -bottom-4 select-none pointer-events-none font-mono font-black text-8xl text-amber-500/[0.07] leading-none">
             &gt;
           </div>
@@ -256,7 +260,6 @@ export const TrajectoryChart: React.FC<TrajectoryChartProps> = ({
               Unconstrained Baseline MLP
             </span>
 
-            {/* Prominent Equation + Custom Unstable Oscillating Sparkline SVG */}
             <div className="flex items-center gap-3.5">
               <div className="font-mono text-2xl sm:text-3xl font-extrabold text-amber-600 tracking-tight">
                 ∂Q/∂t &gt; 0
@@ -280,10 +283,8 @@ export const TrajectoryChart: React.FC<TrajectoryChartProps> = ({
 
         {/* CARD 2: PINN Regularization */}
         <div className="relative rounded-[24px] bg-white/70 backdrop-blur-xl border border-white/80 overflow-hidden flex shadow-[0_6px_20px_rgba(0,0,0,0.02)]">
-          {/* Cyan/Blue Accent Bar */}
           <div className="w-1.5 bg-[#0284c7] shrink-0" />
           
-          {/* Subtle Oversized Background Comparison Symbol Watermark "≤" */}
           <div className="absolute right-3 -bottom-4 select-none pointer-events-none font-mono font-black text-8xl text-[#0284c7]/[0.07] leading-none">
             ≤
           </div>
@@ -293,7 +294,6 @@ export const TrajectoryChart: React.FC<TrajectoryChartProps> = ({
               PINN Regularization
             </span>
 
-            {/* Prominent Equation + Custom Smooth Monotonic Decaying Sparkline SVG */}
             <div className="flex items-center gap-3.5">
               <div className="font-mono text-2xl sm:text-3xl font-extrabold text-[#0284c7] tracking-tight">
                 ∂Q/∂t ≤ 0
