@@ -46,3 +46,18 @@ def evaluate_all(y_true, preds: dict, groups=None) -> dict:
                 count_physics_violations(y_pred[groups == g]) for g in np.unique(groups)
             )
     return {"metrics": metrics, "violations": violations}
+
+
+def physics_metrics(soh_curve):
+    """Calculate physics violations: count, sum magnitude, and maximum magnitude."""
+    preds = np.asarray(soh_curve, dtype=np.float64).ravel()
+    if preds.size < 2:
+        return 0, 0.0, 0.0
+    diffs = np.diff(preds)
+    positive_diffs = diffs[diffs > 0]
+    if positive_diffs.size == 0:
+        return 0, 0.0, 0.0
+    violation_count = int(len(positive_diffs))
+    violation_magnitude = float(np.sum(positive_diffs))
+    max_violation = float(np.max(positive_diffs))
+    return violation_count, violation_magnitude, max_violation
