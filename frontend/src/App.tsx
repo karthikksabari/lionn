@@ -643,7 +643,13 @@ export const App: React.FC = () => {
               {/* 2. Side-by-Side Staggered Cards (Scorecard & RUL) */}
               <div className="gsap-side-grid grid grid-cols-1 lg:grid-cols-2 gap-8 items-stretch">
                 <div className="gsap-side-card rounded-[32px] bg-slate-900/[0.04] backdrop-blur-[24px] border border-white/80 p-6 sm:p-8 shadow-[0_20px_50px_rgba(2,132,199,0.06)] flex flex-col justify-between">
-                  <ScorecardPanel metrics={predictionData.metrics} />
+                  <ScorecardPanel
+  metrics={predictionData.metrics}
+  cycles={predictionData.cycles}
+  groundTruth={predictionData.ground_truth}
+  capacityBaselineMlp={predictionData.capacity_baseline_mlp}
+  capacityPinn={predictionData.capacity_pinn}
+/>
                 </div>
 
                 <div className="gsap-side-card rounded-[32px] bg-slate-900/[0.04] backdrop-blur-[24px] border border-white/80 p-6 sm:p-8 shadow-[0_20px_50px_rgba(2,132,199,0.06)] flex flex-col justify-between">
