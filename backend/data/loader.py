@@ -26,16 +26,19 @@ def generate_synthetic_dataset(
     n_cycles: int = 200,
     seed: int = SYNTHETIC_SEED,
 ) -> pd.DataFrame:
-    """Battery-like SOH curves: soh(cycle) = exp(-decay_rate * cycle) + noise."""
+    """Battery-like SOH curves generated using the physical degradation ODE."""
     rng = np.random.default_rng(seed)
     frames = []
     for i in range(n_profiles):
-        decay_rate = rng.uniform(0.003, 0.006)
         c_rate = float(rng.uniform(0.5, 2.0))
         temperature = float(rng.uniform(10.0, 40.0))
         cycles = np.arange(1, n_cycles + 1, dtype=np.float32)
-        noise = rng.normal(0.0, 0.005, size=n_cycles)
-        soh = np.exp(-decay_rate * cycles) + noise
+        
+        # Generate clean curve using the same ODE
+        soh_clean = simulate_degradation_ode(c_rate, temperature, n_cycles)
+        noise = rng.normal(0.0, 0.002, size=n_cycles)
+        soh = soh_clean + noise
+        
         frames.append(
             pd.DataFrame(
                 {
@@ -43,7 +46,7 @@ def generate_synthetic_dataset(
                     "cycle": cycles,
                     "c_rate": c_rate,
                     "temperature": temperature,
-                    "soh": np.clip(soh, 0.0, 1.0),
+                    "soh": np.clip(soh, 0.05, 1.0),
                 }
             )
         )
@@ -51,12 +54,11 @@ def generate_synthetic_dataset(
 
 
 def synthetic_curve(n_cycles: int, seed: int = SYNTHETIC_SEED) -> np.ndarray:
-    """Reference exponential decay curve used as the fallback "real" series."""
+    """Reference curve generated using physical ODE model for nominal standard conditions."""
+    soh_clean = simulate_degradation_ode(1.0, 25.0, n_cycles)
     rng = np.random.default_rng(seed)
-    decay_rate = rng.uniform(0.003, 0.006)
-    cycles = np.arange(1, n_cycles + 1, dtype=np.float32)
-    noise = rng.normal(0.0, 0.005, size=n_cycles)
-    return np.clip(np.exp(-decay_rate * cycles) + noise, 0.0, 1.0)
+    noise = rng.normal(0.0, 0.002, size=n_cycles)
+    return np.clip(soh_clean + noise, 0.05, 1.0)
 
 
 def load_nasa_mat(path: str | os.PathLike, rated_capacity: float = RATED_CAPACITY_AH) -> pd.DataFrame:
