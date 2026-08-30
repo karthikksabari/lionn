@@ -6,7 +6,7 @@ Run with: python -m scripts.train
 import numpy as np
 
 from backend.data.loader import FEATURE_COLS, load_all_raw, preprocess
-from backend.models import baseline_a, pinn
+from backend.models import baseline_a, physics_lstm as pinn
 from backend.utils.metrics import MODEL_KEYS, evaluate_all
 
 CYCLE_COL_IDX = FEATURE_COLS.index("cycle")
@@ -56,7 +56,7 @@ def main() -> None:
 if __name__ == "__main__":
     import json
     from pathlib import Path
-    from backend.models import baseline_a, pinn
+    from backend.models import baseline_a, physics_lstm as pinn
 
     baseline_a_losses = []
     pinn_losses = []
@@ -103,39 +103,42 @@ if __name__ == "__main__":
         from torch import nn
         from torch.utils.data import DataLoader, TensorDataset
 
-        torch.manual_seed(42)
-        X = torch.as_tensor(np.asarray(X_train, dtype=np.float32))
-        y = torch.as_tensor(np.asarray(y_train, dtype=np.float32)).reshape(-1, 1)
+        def create_sequences(X, y, window_size=10):
+            Xs, ys = [], []
+            for i in range(len(X) - window_size):
+                Xs.append(X[i:i+window_size])
+                ys.append(y[i+window_size])
+            return np.array(Xs), np.array(ys)
 
-        model = pinn.PINN(in_features=X.shape[1])
+        X_train_seq, y_train_seq = create_sequences(X_train, y_train, window_size=10)
+
+        torch.manual_seed(42)
+        X = torch.as_tensor(np.asarray(X_train_seq, dtype=np.float32))
+        y = torch.as_tensor(np.asarray(y_train_seq, dtype=np.float32)).reshape(-1, 1)
+
+        model = pinn.PhysicsLSTM(input_size=X.shape[2])
         criterion = nn.MSELoss()
         optimiser = torch.optim.Adam(model.parameters(), lr=1e-3)
-        loader = DataLoader(TensorDataset(X, y), batch_size=64, shuffle=True)
+        loader = DataLoader(TensorDataset(X, y), batch_size=64, shuffle=False)
 
         model.train()
-        for epoch in range(1, 401):
-            data_sum = 0.0
-            physics_sum = 0.0
+        for epoch in range(1, 101):
+            epoch_loss = 0.0
             for xb, yb in loader:
                 optimiser.zero_grad()
-                l_data = criterion(model(xb), yb)
-                l_physics = pinn.physics_loss(model, xb, cycle_col_idx=cycle_col_idx)
-                loss = l_data + 0.5 * l_physics
+                pred = model(xb)
+                loss = pinn.physics_informed_loss(pred, yb, lambda_weight=0.1)
                 loss.backward()
                 optimiser.step()
-                data_sum += l_data.item() * xb.shape[0]
-                physics_sum += l_physics.item() * xb.shape[0]
-            epoch_loss = float((data_sum + 0.5 * physics_sum) / len(X))
-            pinn_losses.append(epoch_loss)
-            if epoch % 50 == 0 or epoch == 1:
-                print(
-                    f"[pinn] epoch {epoch:4d}/400  "
-                    f"l_data={data_sum / len(X):.6f}  l_physics={physics_sum / len(X):.8f}"
-                )
+                epoch_loss += loss.item() * xb.shape[0]
+            loss_val = float(epoch_loss / len(X))
+            pinn_losses.append(loss_val)
+            if epoch % 20 == 0 or epoch == 1:
+                print(f"[physics_lstm] epoch {epoch:4d}/100  loss={loss_val:.6f}")
 
         pinn.SAVED_DIR.mkdir(parents=True, exist_ok=True)
         torch.save(model.state_dict(), pinn.SAVE_PATH)
-        print(f"[pinn] saved -> {pinn.SAVE_PATH}")
+        print(f"[physics_lstm] saved -> {pinn.SAVE_PATH}")
         return model
 
     # Patch baseline_a and pinn modules
@@ -145,23 +148,14 @@ if __name__ == "__main__":
     # Run the main training of scripts/train.py
     main()
 
-    # Load data for training the new LSTM model
-    from backend.data.loader import load_processed
-    X_train, X_test, y_train, y_test = load_processed()
-
-    print("[extra] training lstm_model")
-    from backend.models import lstm_model
-    _, lstm_losses = lstm_model.train_with_history(X_train, y_train)
-
-    # Save the training history for all three models
+    # Save the training history
     history_data = {
         "baseline_a": baseline_a_losses,
         "pinn": pinn_losses,
-        "lstm_model": lstm_losses,
     }
 
     history_path = Path(__file__).resolve().parents[1] / "backend" / "data" / "processed" / "training_history.json"
     history_path.parent.mkdir(parents=True, exist_ok=True)
     with open(history_path, "w") as f:
         json.dump(history_data, f, indent=2)
-    print(f"[extra] training history saved -> {history_path}")
+    print(f"[train] training history saved -> {history_path}")
