@@ -16,7 +16,7 @@ from backend.data.loader import (
     simulate_degradation_ode,
     get_profile_label,
 )
-from backend.models import baseline_a, physics_lstm as pinn
+from backend.models import baseline_a, pinn
 from backend.utils.metrics import evaluate_all
 
 logger = logging.getLogger("battery_api")
@@ -249,119 +249,4 @@ def predict(req: PredictRequest) -> dict:
         "ground_truth_type": ground_truth_type,
         "warning": warning_msg,
     }
-
-
-# --- PhysicsLSTM Integration ---
-from pathlib import Path
-import torch
-from fastapi import HTTPException
-from backend.models.physics_lstm import PhysicsLSTM
-from backend.utils.metrics import mae, rmse, count_physics_violations
-
-physics_lstm_model = None
-
-@app.on_event("startup")
-def load_physics_lstm_weights() -> None:
-    global physics_lstm_model
-    weights_path = Path(__file__).resolve().parents[1] / "models" / "saved" / "physics_lstm.pt"
-    if weights_path.exists():
-        try:
-            model = PhysicsLSTM()
-            model.load_state_dict(torch.load(weights_path, map_location="cpu"))
-            model.eval()
-            physics_lstm_model = model
-            logger.info("Loaded PhysicsLSTM weights from %s", weights_path)
-        except Exception as exc:
-            logger.warning("Failed to load PhysicsLSTM weights (%s)", exc)
-    else:
-        logger.info("PhysicsLSTM weights not found at %s; skipping silently", weights_path)
-
-
-class PredictLstmResponse(BaseModel):
-    cycles: list[int]
-    real: list[float]
-    predicted_soh: list[float]
-    mae: float
-    rmse: float
-    violations: int
-    ground_truth_type: str
-    warning: str | None = None
-
-
-@app.post("/predict-lstm", response_model=PredictLstmResponse)
-def predict_lstm(req: PredictRequest) -> dict:
-    global physics_lstm_model
-    if physics_lstm_model is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Physics LSTM not trained yet. Run scripts/train_physics_lstm.py first."
-        )
-
-    warning_msg = None
-    scaler = STATE["scaler"]
-    if scaler is not None and hasattr(scaler, "data_min_") and hasattr(scaler, "data_max_"):
-        c_rate_min, c_rate_max = float(scaler.data_min_[1]), float(scaler.data_max_[1])
-        temp_min, temp_max = float(scaler.data_min_[2]), float(scaler.data_max_[2])
-        if req.c_rate < c_rate_min or req.c_rate > c_rate_max or req.temperature < temp_min or req.temperature > temp_max:
-            warning_msg = (
-                f"Extrapolation warning: Requested conditions (C-rate: {req.c_rate:.2f}C, Temp: {req.temperature:.1f}°C) "
-                f"are outside the model's trained range (C-rate: [{c_rate_min:.2f}, {c_rate_max:.2f}], Temp: [{temp_min:.1f}, {temp_max:.1f}])."
-            )
-
-    cycles = np.arange(1, req.n_cycles + 1, dtype=np.float32)
-    X_raw = np.stack(
-        [
-            cycles,
-            np.full(req.n_cycles, req.c_rate, dtype=np.float32),
-            np.full(req.n_cycles, req.temperature, dtype=np.float32),
-        ],
-        axis=1,
-    )
-    X = scaler.transform(X_raw).astype(np.float32) if scaler is not None else X_raw
-
-    # Create sequence by repeating 10 times: shape (n_cycles, 10, 3)
-    X_seq = np.repeat(X[:, np.newaxis, :], 10, axis=1)
-
-    with torch.no_grad():
-        X_seq_tensor = torch.tensor(X_seq, dtype=torch.float32)
-        pred_soh = physics_lstm_model(X_seq_tensor).numpy().ravel()
-
-    # Determine ground truth
-    df = STATE["raw"]
-    is_known = False
-    real = None
-    ground_truth_type = "simulated"
-
-    if df is not None and req.profile_id:
-        subset = df[df["profile_id"] == req.profile_id].sort_values("cycle")
-        if not subset.empty:
-            is_known = True
-            values = subset[TARGET_COL].to_numpy(dtype=np.float64)
-            if values.size >= req.n_cycles:
-                real = values[:req.n_cycles]
-            else:
-                padded = np.full(req.n_cycles, values[-1], dtype=np.float64)
-                padded[: values.size] = values
-                real = padded
-            ground_truth_type = "measured"
-
-    if not is_known:
-        real = simulate_degradation_ode(req.c_rate, req.temperature, req.n_cycles)
-        ground_truth_type = "simulated"
-
-    mae_val = float(mae(real, pred_soh))
-    rmse_val = float(rmse(real, pred_soh))
-    viol_count = int(count_physics_violations(pred_soh))
-
-    return {
-        "cycles": [int(c) for c in cycles],
-        "real": np.round(real, 6).tolist(),
-        "predicted_soh": np.round(pred_soh.astype(np.float64), 6).tolist(),
-        "mae": round(mae_val, 6),
-        "rmse": round(rmse_val, 6),
-        "violations": viol_count,
-        "ground_truth_type": ground_truth_type,
-        "warning": warning_msg,
-    }
-
 
