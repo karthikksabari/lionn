@@ -1,5 +1,9 @@
 // src/App.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import Lenis from 'lenis';
+import gsap from 'gsap';
+import { ScrollTrigger } from 'gsap/ScrollTrigger';
+
 import { PredictRequest, PredictResponse } from './types';
 import { predictBatteryHealth } from './api/predict';
 import { InputPanel } from './components/InputPanel';
@@ -7,7 +11,10 @@ import { TrajectoryChart } from './components/TrajectoryChart';
 import { ScorecardPanel } from './components/ScorecardPanel';
 import { RulPanel } from './components/RulPanel';
 import { PhysicsLossPanel } from './components/PhysicsLossPanel';
+import { useMagnetic } from './hooks/useMagnetic';
 import { RotateCcw, AlertTriangle, Loader2, Zap, ArrowLeft } from 'lucide-react';
+
+gsap.registerPlugin(ScrollTrigger);
 
 type ScreenState = 'landing' | 'input' | 'results';
 
@@ -173,6 +180,114 @@ export const App: React.FC = () => {
 
   const [predictionData, setPredictionData] = useState<PredictResponse | null>(null);
 
+  // Magnetic Button Refs
+  const landingBtnRef = useMagnetic<HTMLButtonElement>(0.2);
+
+  // Results Page Container for GSAP Scope
+  const resultsContainerRef = useRef<HTMLDivElement>(null);
+  const lionParallaxRef = useRef<HTMLDivElement>(null);
+  const backgroundParallaxRef = useRef<HTMLDivElement>(null);
+
+  // 1. Initialize Lenis Smooth Scrolling & Bind to GSAP ScrollTrigger
+  useEffect(() => {
+    const lenis = new Lenis({
+      duration: 1.1,
+      easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+      orientation: 'vertical',
+      smoothWheel: true,
+    });
+
+    lenis.on('scroll', ScrollTrigger.update);
+
+    const updateLenis = (time: number) => {
+      lenis.raf(time * 1000);
+    };
+
+    gsap.ticker.add(updateLenis);
+    gsap.ticker.lagSmoothing(0);
+
+    return () => {
+      gsap.ticker.remove(updateLenis);
+      lenis.destroy();
+    };
+  }, []);
+
+  // 2. Results Screen: Scroll-Triggered Staggered Reveals + Parallax
+  useEffect(() => {
+    if (screen !== 'results' || !predictionData) return;
+
+    const ctx = gsap.context(() => {
+      // 4. Background Parallax (Lion & Scattered Icons at 50-70% speed)
+      if (lionParallaxRef.current) {
+        gsap.to(lionParallaxRef.current, {
+          yPercent: 30,
+          ease: 'none',
+          scrollTrigger: {
+            trigger: resultsContainerRef.current,
+            start: 'top top',
+            end: 'bottom bottom',
+            scrub: 0.8,
+          },
+        });
+      }
+
+      if (backgroundParallaxRef.current) {
+        gsap.to(backgroundParallaxRef.current, {
+          yPercent: 20,
+          ease: 'none',
+          scrollTrigger: {
+            trigger: resultsContainerRef.current,
+            start: 'top top',
+            end: 'bottom bottom',
+            scrub: 1.0,
+          },
+        });
+      }
+
+      // 2. Staggered Card Reveals on Scroll
+      const revealCards = gsap.utils.toArray<HTMLElement>('.gsap-reveal-card');
+      revealCards.forEach((card) => {
+        gsap.fromTo(
+          card,
+          { opacity: 0, y: 32 },
+          {
+            opacity: 1,
+            y: 0,
+            duration: 0.55,
+            ease: 'power2.out',
+            scrollTrigger: {
+              trigger: card,
+              start: 'top 88%',
+              toggleActions: 'play none none none',
+            },
+          }
+        );
+      });
+
+      // Side-by-side card stagger (Scorecard / RUL)
+      gsap.fromTo(
+        '.gsap-side-card',
+        { opacity: 0, y: 28 },
+        {
+          opacity: 1,
+          y: 0,
+          duration: 0.5,
+          stagger: 0.12,
+          ease: 'power2.out',
+          scrollTrigger: {
+            trigger: '.gsap-side-grid',
+            start: 'top 88%',
+            toggleActions: 'play none none none',
+          },
+        }
+      );
+
+      ScrollTrigger.refresh();
+    }, resultsContainerRef);
+
+    return () => ctx.revert();
+  }, [screen, predictionData]);
+
   const handleRunPrediction = async (request: PredictRequest) => {
     setLastRequest(request);
     setIsLoading(true);
@@ -195,7 +310,6 @@ export const App: React.FC = () => {
     setScreen('input');
   };
 
-  // SOH calculations
   const ratedCapacity = predictionData?.capacity_pinn?.[0] ?? 1.1;
   const finalPredictedCapacity = predictionData?.capacity_pinn
     ? predictionData.capacity_pinn[predictionData.capacity_pinn.length - 1]
@@ -206,7 +320,6 @@ export const App: React.FC = () => {
   );
   const isSafeOperating = currentSohPercent >= 80.0;
 
-  // Resilient RUL extraction
   const pinnRulCycles =
     predictionData?.rul?.rul_pinn ??
     (predictionData?.rul as any)?.pinn_cycles ??
@@ -280,9 +393,11 @@ export const App: React.FC = () => {
                     </div>
 
                     <div className="w-full flex items-center justify-center pt-1">
+                      {/* 3. Magnetic Button Hover */}
                       <button
+                        ref={landingBtnRef}
                         onClick={() => setScreen('input')}
-                        className="group relative w-full max-w-md h-16 sm:h-[70px] flex items-center justify-center rounded-2xl border-2 border-slate-300/80 bg-slate-50/90 hover:border-[#0284c7] shadow-[0_10px_30px_-5px_rgba(2,132,199,0.25)] hover:shadow-[0_16px_40px_-5px_rgba(2,132,199,0.45)] active:scale-[0.99] transition-all duration-300 overflow-visible cursor-pointer"
+                        className="group relative w-full max-w-md h-16 sm:h-[70px] flex items-center justify-center rounded-2xl border-2 border-slate-300/80 bg-slate-50/90 hover:border-[#0284c7] shadow-[0_10px_30px_-5px_rgba(2,132,199,0.25)] hover:shadow-[0_16px_40px_-5px_rgba(2,132,199,0.45)] active:scale-[0.99] transition-colors duration-300 overflow-visible cursor-pointer"
                       >
                         <span className="absolute -right-3 sm:-right-3.5 top-1/2 -translate-y-1/2 w-2.5 sm:w-3 h-7 sm:h-8 rounded-r-md bg-slate-300 border-2 border-l-0 border-slate-300 group-hover:bg-[#0284c7] group-hover:border-[#0284c7] transition-colors duration-300 pointer-events-none" />
 
@@ -388,7 +503,7 @@ export const App: React.FC = () => {
 
         {/* ================= 3. DEDICATED RESULTS VIEW ================= */}
         {screen === 'results' && predictionData && (
-          <div className="relative min-h-screen w-full overflow-x-hidden">
+          <div ref={resultsContainerRef} className="relative min-h-screen w-full overflow-x-hidden">
             
             {/* LAYER A: Fixed Background Layer */}
             <div 
@@ -397,7 +512,8 @@ export const App: React.FC = () => {
                 background: 'linear-gradient(to top, #0284c7 0%, rgba(2, 132, 199, 0.75) 15%, rgba(2, 132, 199, 0.35) 35%, rgba(255, 255, 255, 0.95) 65%, #ffffff 100%)'
               }}
             >
-              <div className="absolute top-[-15px] left-[-15px]">
+              {/* 4. Parallax Background Lion Art */}
+              <div ref={lionParallaxRef} className="absolute top-[-15px] left-[-15px]">
                 <img
                   src="/lion-profile.png"
                   alt="Corner Lion Art"
@@ -408,7 +524,10 @@ export const App: React.FC = () => {
                 />
               </div>
 
-              <ScatteredBackgroundElements theme="light" />
+              {/* 4. Parallax Scattered Background Elements */}
+              <div ref={backgroundParallaxRef} className="absolute inset-0">
+                <ScatteredBackgroundElements theme="light" />
+              </div>
             </div>
 
             {/* LAYER B: Scrollable Content Layer */}
@@ -444,8 +563,8 @@ export const App: React.FC = () => {
                 </div>
               </div>
 
-              {/* Minimalist Diagnostic Summary Section */}
-              <div className="rounded-[32px] bg-slate-900/[0.04] backdrop-blur-[24px] border border-white/80 p-8 sm:p-10 shadow-[0_24px_50px_rgba(2,132,199,0.08)] space-y-7">
+              {/* 2. Scroll-Triggered Diagnostic Summary */}
+              <div className="gsap-reveal-card rounded-[32px] bg-slate-900/[0.04] backdrop-blur-[24px] border border-white/80 p-8 sm:p-10 shadow-[0_24px_50px_rgba(2,132,199,0.08)] space-y-7">
                 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
                   
@@ -490,7 +609,6 @@ export const App: React.FC = () => {
 
                 </div>
 
-                {/* Supporting Context Subtitle */}
                 <p className="text-xs sm:text-sm text-slate-600 font-sans leading-relaxed pt-3 border-t border-slate-200/60">
                   {isCustomScenario ? (
                     <>
@@ -511,8 +629,8 @@ export const App: React.FC = () => {
 
               </div>
 
-              {/* Trajectory Degradation Section */}
-              <div className="rounded-[32px] bg-slate-900/[0.04] backdrop-blur-[24px] border border-white/80 p-6 sm:p-9 lg:p-10 shadow-[0_20px_50px_rgba(2,132,199,0.06)]">
+              {/* 2. Scroll-Triggered Trajectory Degradation Section */}
+              <div className="gsap-reveal-card rounded-[32px] bg-slate-900/[0.04] backdrop-blur-[24px] border border-white/80 p-6 sm:p-9 lg:p-10 shadow-[0_20px_50px_rgba(2,132,199,0.06)]">
                 <TrajectoryChart
                   cycles={predictionData.cycles}
                   groundTruth={predictionData.ground_truth}
@@ -522,19 +640,19 @@ export const App: React.FC = () => {
                 />
               </div>
 
-              {/* Scorecard & RUL Estimation Cards */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-stretch">
-                <div className="rounded-[32px] bg-slate-900/[0.04] backdrop-blur-[24px] border border-white/80 p-6 sm:p-8 shadow-[0_20px_50px_rgba(2,132,199,0.06)] flex flex-col justify-between">
+              {/* 2. Side-by-Side Staggered Cards (Scorecard & RUL) */}
+              <div className="gsap-side-grid grid grid-cols-1 lg:grid-cols-2 gap-8 items-stretch">
+                <div className="gsap-side-card rounded-[32px] bg-slate-900/[0.04] backdrop-blur-[24px] border border-white/80 p-6 sm:p-8 shadow-[0_20px_50px_rgba(2,132,199,0.06)] flex flex-col justify-between">
                   <ScorecardPanel metrics={predictionData.metrics} />
                 </div>
 
-                <div className="rounded-[32px] bg-slate-900/[0.04] backdrop-blur-[24px] border border-white/80 p-6 sm:p-8 shadow-[0_20px_50px_rgba(2,132,199,0.06)] flex flex-col justify-between">
+                <div className="gsap-side-card rounded-[32px] bg-slate-900/[0.04] backdrop-blur-[24px] border border-white/80 p-6 sm:p-8 shadow-[0_20px_50px_rgba(2,132,199,0.06)] flex flex-col justify-between">
                   <RulPanel rul={predictionData.rul} />
                 </div>
               </div>
 
-              {/* Physics Loss Trace Card */}
-              <div className="rounded-[32px] bg-slate-900/[0.04] backdrop-blur-[24px] border border-white/80 p-6 sm:p-8 lg:p-10 shadow-[0_20px_50px_rgba(2,132,199,0.06)]">
+              {/* 2. Scroll-Triggered Physics Loss Trace Card */}
+              <div className="gsap-reveal-card rounded-[32px] bg-slate-900/[0.04] backdrop-blur-[24px] border border-white/80 p-6 sm:p-8 lg:p-10 shadow-[0_20px_50px_rgba(2,132,199,0.06)]">
                 <PhysicsLossPanel
                   physicsLossTrace={predictionData.physics_loss_trace}
                 />
